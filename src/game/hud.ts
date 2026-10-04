@@ -44,6 +44,9 @@ export class MissionHUD {
   readonly incoming = new IncomingFire()
   private threat: HTMLElement
   private threatLabel: HTMLElement
+  /** The alert phase plate (after Metal Gear Solid V): ALERT, SEARCH or CAUTION, where, and how long it has left. */
+  private phase = document.createElement('div')
+  private phaseKey = ''
   private objectives = new ObjectivesPanel()
   private briefingDue = true
   /** The tutorial level: its own lesson list replaces the mission objectives. */
@@ -104,7 +107,11 @@ export class MissionHUD {
     this.threat.setAttribute('aria-hidden', 'true')
     this.threat.innerHTML = '<i></i><span></span>'
     this.threatLabel = this.threat.querySelector('span')!
-    this.root.append(this.threat, this.objectives.root)
+    this.phase.className = 'mission-phase'
+    this.phase.hidden = true
+    this.phase.setAttribute('role', 'status')
+    this.phase.innerHTML = '<b></b><span></span><i><u></u></i>'
+    this.root.append(this.threat, this.phase, this.objectives.root)
     this.clearThreat()
     this.health = $('#mission-health')
     this.scope.className = 'mission-scope'
@@ -225,8 +232,11 @@ export class MissionHUD {
     if (this.scopeLabel.textContent !== label) this.scopeLabel.textContent = label
   }
 
-  update(dt: number, state: MissionState, data: { playing: boolean; enabled: boolean; weapon: WeaponItem | null; reloading: boolean; position: THREE.Vector3; yaw: number; deaths: number; ready: boolean }) {
+  update(dt: number, state: MissionState, data: { playing: boolean; enabled: boolean; weapon: WeaponItem | null; reloading: boolean; position: THREE.Vector3; yaw: number; deaths: number; ready: boolean
+    /** The level's highest alert phase (game/zones.ts): which, in which zone, and how much of its time is left (0-1). */
+    phase?: { phase: 'normal' | 'caution' | 'search' | 'alert'; zone: string; left: number } | null }) {
     this.root.hidden = !data.enabled || !data.playing
+    this.updatePhase(state.phase === 'active' ? data.phase ?? null : null)
     const health = Math.max(0, Math.min(100, state.health))
     this.health.setAttribute('aria-valuenow', String(Math.ceil(health)))
     this.health.setAttribute('aria-valuetext', `${Math.ceil(health)} of 100`)
@@ -263,5 +273,21 @@ export class MissionHUD {
     this.objectives.update(this.objectiveSource.list(state), data.playing ? dt : 0)
     this.menu.update(state, data, this.objectiveSource.hint(state))
   }
+  private updatePhase(phase: { phase: 'normal' | 'caution' | 'search' | 'alert'; zone: string; left: number } | null) {
+    const shown = !!phase && phase.phase !== 'normal'
+    this.phase.hidden = !shown
+    if (!shown) { this.phaseKey = ''; return }
+    const key = `${phase.phase}:${phase.zone}`
+    if (key !== this.phaseKey) {
+      this.phaseKey = key
+      this.phase.dataset.phase = phase.phase
+      this.phase.querySelector('b')!.textContent = phase.phase.toUpperCase()
+      this.phase.querySelector('span')!.textContent = phase.zone
+    }
+    // The bar drains as the phase runs down; on alert (someone sees you) it stays full.
+    const left = (phase.phase === 'alert' ? 1 : Math.max(0, Math.min(1, phase.left))).toFixed(3)
+    if (this.phase.style.getPropertyValue('--left') !== left) this.phase.style.setProperty('--left', left)
+  }
+
   dispose() { this.menu.dispose(); this.abort.abort(); this.clearDeath(); this.clearEscape(); this.escape.remove(); this.death.remove(); this.setScoped(false); this.scope.remove(); this.root.remove(); this.icon.remove(); delete document.body.dataset.mission }
 }

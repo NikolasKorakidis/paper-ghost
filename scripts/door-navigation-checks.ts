@@ -97,7 +97,10 @@ for (let split = 1; split < 2000; split++) {
   }
   interruptions++
 }
-assert(interruptions >= 77 && interruptions < 1999, 'exercise the failing search stage and exhaust all yield points')
+// The search's octile estimate looks at fewer cells than it once did, so it has fewer yield points than the 77 it
+// once had; dozens still means it went round through the doorway (a direct route has a handful), and every one was
+// interrupted.
+assert(interruptions >= 50 && interruptions < 1999, `exercise the failing search stage and exhaust all yield points (${interruptions})`)
 open(true)
 console.log(`PASS shared-cache invalidation safely restarts all ${interruptions} search yield points`)
 

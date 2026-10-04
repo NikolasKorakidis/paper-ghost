@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import * as THREE from 'three'
 import { EnemyDirector, insideVisionCone, audible, rayBodyDistance } from '../src/game/ai'
-import { DETECTION } from '../src/game/balance'
+import { COMBAT_ROLES, DETECTION } from '../src/game/balance'
 import type { EnemyActor } from '../src/game/actors'
 import { gridPath, EnemyNavigation } from '../src/game/navigation'
 import { CollisionWorld } from '../src/player/collision'
@@ -177,11 +177,13 @@ await check('Live director spots, is sure after the notice time, and obeys last-
   assert.equal(director.enemies[2].state, 'guard', 'a far guard in no squad of his must not receive a magical global alert')
   const saved = director.snapshot()
   player.feet.set(0, 0, -50); player.eye.set(0, 1.65, -50)
-  advance(1.8)
-  assert.equal(director.enemies[0].state, 'investigate')
+  // He is his squad's suppressor (COMBAT_ROLES.suppress): he keeps firing at where you were before he goes looking.
+  advance(1.8 + COMBAT_ROLES.suppress.after + COMBAT_ROLES.suppress.time)
+  assert(['investigate', 'search'].includes(director.enemies[0].state), `then he hunts for you (${director.enemies[0].state})`)
   assert(director.enemies[0].lastKnown!.z > 0, 'lost guard may only pursue observed contact')
-  // He walks to where he lost you, then searches round it (DETECTION.search.lost), and gives up after that.
-  advance(30)
+  // He walks to where he lost you, then searches round it (DETECTION.search.lost); his zone, no longer seeing you,
+  // sends him out with a search team (DETECTION.search.sweep), and he gives up after that.
+  advance(30 + DETECTION.search.sweep.time)
   assert(['guard', 'patrol'].includes(director.enemies[0].state), 'search must expire')
   director.restore(saved)
   assert.deepEqual(director.snapshot(), saved, 'checkpoint restores meaningful clocks, PRNG and routes')

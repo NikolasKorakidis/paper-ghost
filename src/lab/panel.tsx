@@ -67,7 +67,7 @@ function Panel({ ctx, controls, renderer }: { ctx: Ctx; controls: OrbitControls;
         onClick={e => { blur(e); exportSheet(ctx, renderer) }}>Export model sheet (.png)</button>
     </div>
 
-    {character === 'bulky' && <div class="moves">
+    {character !== 'guard' && <div class="moves">
       <h4>His moves</h4>
       {BULKY_MOVES.map(move => <button key={move.label} title={move.note} onClick={e => { blur(e); move.run(ctx) }}>
         <strong>{move.label}</strong><span>{move.note}</span></button>)}

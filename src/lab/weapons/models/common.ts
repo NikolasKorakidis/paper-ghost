@@ -4,7 +4,7 @@ import { createPenSilhouette, createPenStrokeMesh, penEdgeMarks, penLineMarks, p
   type SketchSegments } from '../../../render/ballpoint'
 
 /** Gun frame: +Z forward, +Y up, origin at the centre of the firing-hand grip. Units are metres. */
-export type GunName = 'pistol' | 'revolver' | 'smg' | 'ak' | 'shotgun' | 'sniper' | 'silenced' | 'knife'
+export type GunName = 'pistol' | 'revolver' | 'smg' | 'ak' | 'shotgun' | 'sniper' | 'silenced' | 'knife' | 'breaker'
 export type GunClass = 'pistol' | 'ak' | 'shotgun' | 'sniper'
 export type Gun = THREE.Group & {
   userData: {

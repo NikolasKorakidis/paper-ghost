@@ -193,3 +193,80 @@ export function buildAk(): Gun {
   result.userData.support = new THREE.Vector3(0, -0.005, 0.27)
   return result
 }
+
+/**
+ * The Breaker: Bulky Boy's heavy belt-fed machine gun, built like the others from inked paper parts but sized for a
+ * giant's hands (he carries it at his own 2× scale). A boxy receiver under a hinged feed cover, a long cooling jacket
+ * pierced with holes round the barrel, a slotted muzzle brake, a carry handle, a skeleton stock, a vertical front grip
+ * for the support hand, a folded bipod, and an ammunition box with its belt feeding in from the left.
+ */
+export function buildBreaker(): Gun {
+  const result = gun('breaker', 'ak', true, [0, 0.09, 0.98], [0.045, 0.11, 0.16], (g, parts) => {
+    // Receiver, feed cover and its hinge.
+    g.add(box(0.078, 0.112, 0.38, [0, 0.088, 0.12]))
+    g.add(box(0.084, 0.03, 0.21, [0, 0.158, 0.13], dark))
+    g.add(tube(0.012, 0.088, [0, 0.16, 0.022], dark, [0, 0, 90]))
+    for (const z of [0.07, 0.13, 0.19]) g.add(path([new THREE.Vector3(0.0425, 0.145, z), new THREE.Vector3(0.0425, 0.17, z)], penSeed(`breaker-cover:${z}`), 1.4))
+    // Pistol grip and trigger guard, bigger than a rifle's.
+    const grip = new THREE.Shape()
+    grip.moveTo(-0.026, 0.05)
+    grip.lineTo(0.036, 0.047)
+    grip.lineTo(0.008, -0.075)
+    grip.lineTo(-0.036, -0.079)
+    grip.lineTo(-0.039, -0.045)
+    grip.closePath()
+    g.add(profile(grip, 0.04, [0, 0, 0], wood))
+    g.add(triggerGuard(0.03, 0.11, 0.05, -0.012))
+    g.add(box(0.009, 0.032, 0.009, [0, 0.026, 0.06], dark, [-18, 0, 0]))
+    // Skeleton stock: a top strut, a bottom strut and a thick butt plate.
+    g.add(box(0.03, 0.026, 0.3, [0, 0.12, -0.21], dark))
+    g.add(box(0.03, 0.022, 0.28, [0, 0.025, -0.2], dark, [-9, 0, 0]))
+    g.add(box(0.05, 0.15, 0.03, [0, 0.07, -0.36]))
+    g.add(box(0.036, 0.05, 0.05, [0, 0.135, -0.09], dark))
+    // Cooling jacket round the barrel, its holes in three staggered rows each side, then the barrel and brake.
+    g.add(tube(0.034, 0.42, [0, 0.09, 0.52]))
+    for (const side of [-1, 1]) for (let row = 0; row < 3; row++) for (let i = 0; i < 7; i++) {
+      const z = 0.345 + i * 0.05 + (row % 2) * 0.025, angle = (row - 1) * 0.55
+      const centre = new THREE.Vector3(side * Math.cos(angle) * 0.0345, 0.09 + Math.sin(angle) * 0.0345, z)
+      const ring = Array.from({ length: 9 }, (_, k) => centre.clone().add(new THREE.Vector3(0, Math.sin(k / 8 * Math.PI * 2) * 0.007, Math.cos(k / 8 * Math.PI * 2) * 0.009)))
+      g.add(path(ring, penSeed(`breaker-hole:${side}:${row}:${i}`), 1.2))
+    }
+    g.add(tube(0.013, 0.2, [0, 0.09, 0.83], dark))
+    g.add(tube(0.024, 0.07, [0, 0.09, 0.945]))
+    for (const z of [0.925, 0.945, 0.965]) for (const side of [-1, 1]) {
+      g.add(path([new THREE.Vector3(side * 0.0245, 0.08, z), new THREE.Vector3(side * 0.0245, 0.1, z)], penSeed(`breaker-brake:${z}:${side}`), 1.4))
+    }
+    // Sights and the carry handle over the jacket.
+    g.add(box(0.012, 0.045, 0.012, [0, 0.145, 0.71], dark))
+    g.add(box(0.03, 0.025, 0.02, [0, 0.19, 0.0], dark))
+    for (const z of [0.36, 0.52]) g.add(box(0.014, 0.06, 0.016, [0, 0.15, z], dark))
+    g.add(box(0.02, 0.016, 0.2, [0, 0.185, 0.44], dark))
+    // A vertical grip under the front of the receiver for the support hand, and the folded bipod under the jacket.
+    g.add(box(0.042, 0.13, 0.05, [0, -0.0, 0.37], wood, [8, 0, 0]))
+    for (const x of [-0.022, 0.022]) g.add(tube(0.006, 0.24, [x, 0.05, 0.6], dark))
+    g.add(box(0.06, 0.02, 0.03, [0, 0.055, 0.73], dark))
+    // The ammunition box, hung under the left of the receiver, and its belt of rounds climbing into the feed.
+    const ammo = new THREE.Group()
+    ammo.position.set(-0.035, -0.02, 0.17)
+    ammo.add(box(0.08, 0.16, 0.13, [-0.02, -0.06, 0]))
+    ammo.add(box(0.086, 0.02, 0.136, [-0.02, 0.025, 0], dark))
+    ammo.add(path([new THREE.Vector3(-0.0625, -0.03, -0.05), new THREE.Vector3(-0.0625, -0.03, 0.05)], penSeed('breaker-ammo-latch'), 1.4))
+    for (let i = 0; i < 6; i++) {
+      const t = i / 5
+      ammo.add(box(0.022, 0.014, 0.05, [-0.01 + t * 0.03, 0.04 + t * 0.07, 0.0], metal, [0, 0, 20 + t * 40]))
+    }
+    ammo.userData.grip = new THREE.Vector3(-0.02, -0.08, 0.04)
+    parts.magazine = ammo
+    g.add(ammo)
+    // The charging handle on the right.
+    const bolt = new THREE.Group()
+    bolt.position.set(0.045, 0.1, 0.2)
+    bolt.add(part(new THREE.CylinderGeometry(0.005, 0.005, 0.03, 8), metal, [0, 0, 0], [0, 0, 90]))
+    bolt.add(box(0.016, 0.016, 0.026, [0.02, 0, 0], dark))
+    bolt.userData.grip = new THREE.Vector3(0.04, 0.03, 0)
+    parts.bolt = bolt
+    g.add(bolt)
+  })
+  result.userData.support = new THREE.Vector3(0, -0.03, 0.37)
+  return result
+}

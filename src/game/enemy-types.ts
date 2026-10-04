@@ -10,7 +10,8 @@ import type { EnemySpec, Vec3 } from './types'
  * - breacher: shotgun, short range, hits hard.
  * - sidearm: pistol, officers, guards at desks.
  * - marksman: sniper rifle on a high post; holds it and never comes down to the alarm.
- * - bulky: Bulky Boy, the armoured boss, twice the size, with an AK (see actors.makeBoss).
+ * - bulky: Bulky Boy, the armoured boss, twice the size, with an AK, in his body modelled with Rodin (see actors.makeBoss, boss-models.ts).
+ * - warden, sapper: the other Rodin bosses: the Warden (SMG, lighter armour) and the Sapper (shotgun, a bomb suit for armour).
  * - dummy: a practice target that never fights back and gets up again.
  */
 export const ENEMY_TYPES = {
@@ -19,7 +20,9 @@ export const ENEMY_TYPES = {
   breacher: { weapon: 'shotgun' },
   sidearm: { weapon: 'pistol' },
   marksman: { weapon: 'sniper', role: 'sniper' },
-  bulky: { weapon: 'ak', boss: true, health: BOSS_RULES.health, armor: BOSS_RULES.armor },
+  bulky: { weapon: 'ak', boss: true, health: BOSS_RULES.health, armor: BOSS_RULES.armor, look: 'bulky' },
+  warden: { weapon: 'smg', boss: true, health: BOSS_RULES.health, armor: BOSS_RULES.armor * 0.5, look: 'warden' },
+  sapper: { weapon: 'shotgun', boss: true, health: BOSS_RULES.health * 0.8, armor: BOSS_RULES.armor * 1.6, look: 'sapper' },
   dummy: { weapon: 'pistol', dummy: true, respawn: 4 },
 } as const satisfies Record<string, Partial<EnemySpec> & Pick<EnemySpec, 'weapon'>>
 export type EnemyType = keyof typeof ENEMY_TYPES

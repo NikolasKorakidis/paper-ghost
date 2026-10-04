@@ -39,7 +39,7 @@ export function createTutorialWorld(): MissionWorld {
     { ...dummy('spotter', [-21, TRAINING.spotterHeight, -95]), name: 'Spotter', respawn: 3 },
     soldier('live-1', [-6, 0, -134], 'ak'), soldier('live-2', [5.5, 0, -138], 'smg'), soldier('live-3', [0, 0, -147], 'pistol'),
     { id: 'bulky', name: 'Bulky Boy', position: [0, 0, -205], patrol: [[0, 0, -205]], weapon: 'ak', facing: 0,
-      reserve: true, held: true, boss: true, health: BOSS_RULES.health, armor: BOSS_RULES.armor },
+      reserve: true, held: true, boss: true, health: BOSS_RULES.health, armor: BOSS_RULES.armor, look: 'bulky' },
   ]
   return { level: 'training', root, stations: [], enemies, spawn: TRAINING.spawn, lookAt: TRAINING.lookAt, bounds: TRAINING.bounds, tutorial: true }
 }

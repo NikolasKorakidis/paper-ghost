@@ -297,6 +297,15 @@ body:has(.mission-intro) #mission-hud { z-index: 6; }
 
 /* Notices: a black bar with a grey rule. */
 #mission-caption.visible-notice { border: 0; border-top: 3px solid var(--hud-mid); background: var(--hud-plate); color: var(--hud-white); font: 400 16px/1.25 var(--k7-display); letter-spacing: 0.05em; text-transform: uppercase; box-shadow: 5px 5px 0 #00000055; }
+/* The alert phase: a black plate; red for ALERT and yellow for SEARCH, the colours of the guards' ! and ? balloons. */
+.mission-phase { background: var(--hud-plate); border-top: 4px solid var(--hud-mid); color: var(--hud-white); box-shadow: 5px 5px 0 #00000055; }
+.mission-phase b { font: 400 22px/1 var(--k7-display); letter-spacing: 0.16em; }
+.mission-phase span { font: 400 12px/1.1 var(--k7-display); letter-spacing: 0.14em; color: var(--hud-light); }
+.mission-phase i { background: #ffffff1f; }
+.mission-phase[data-phase="alert"] { border-top-color: var(--k7-red); box-shadow: 5px 5px 0 var(--k7-red-deep); }
+.mission-phase[data-phase="alert"] b, .mission-phase[data-phase="alert"] u { color: var(--k7-red); }
+.mission-phase[data-phase="search"] { border-top-color: var(--k7-yellow); }
+.mission-phase[data-phase="search"] b, .mission-phase[data-phase="search"] u { color: var(--k7-yellow); }
 .mission-threat span { border-top: 3px solid var(--hud-mid); background: var(--hud-plate); color: var(--hud-white); font: 400 13px/1.2 var(--k7-display); letter-spacing: 0.18em; }
 .magazine-count { font: 400 30px/1 var(--k7-display); letter-spacing: 0.02em; color: #111; text-shadow: 2px 2px 0 var(--hud-light); }
 body.mission-scoped .magazine-count { color: var(--hud-white); text-shadow: 2px 2px 0 var(--hud-dark); }

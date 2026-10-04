@@ -28,7 +28,7 @@ import { PlayerHitReactions, type PlayerBulletHit } from './player-hit-reactions
 import { PlayerDeathSequence } from './player-death'
 import { EscapeCinematic } from './escape-cinematic'
 import { EscapeDust } from './escape-dust'
-import { advanceMission, applySharedMission, missionObjective, completeEscape, damageMission, sharedMission, shootMission, initialMission, hurtHostage, loadedCount, stationLabel, useStation, type MissionState } from './mission'
+import { advanceMission, applySharedMission, missionObjective, completeEscape, damageMission, sharedMission, shootMission, initialMission, hurtHostage, loadedCount, radioOut, stationLabel, useStation, type MissionState } from './mission'
 import { HostageEscort } from './hostages'
 import { Captives } from './captives'
 import { hostageAlong, hostagesNear, type HostageBody } from './hostage-harm'
@@ -201,7 +201,10 @@ export class MissionRuntime {
     this.ai = new EnemyDirector({ scene, world: player.world, doors: player.actions.doors, specs: world.enemies,
       emit: event => this.emit(event, false), damagePlayer: (amount, source, hit, playerId) => this.damageFromGuard(amount, source, hit, playerId),
       supplies: () => this.crates.standing(),
-      mapSpan: Math.max(world.bounds.maxX - world.bounds.minX, world.bounds.maxZ - world.bounds.minZ),
+      mapSpan: Math.max(world.bounds.maxX - world.bounds.minX, world.bounds.maxZ - world.bounds.minZ), zones: world.zones,
+      throwGrenade: (kind, origin, velocity) => { if (this.role !== 'guest') this.grenades.throwFrom(kind, origin, velocity) },
+      onRadioLost: zone => { if (this.state.phase === 'active') this.hud.notify(`${zone}: radio silent. They can't call for help.`, 4, true) },
+      radioSets: () => [...this.radios.radios.keys()].map(id => ({ id, position: this.radios.center(id)!, live: !radioOut(this.state, id) })),
       bystander: (from, direction, reach, damage, weapon) => {
         const hostage = hostageAlong(this.hostageBodies(), from, direction, reach)
         if (hostage && damage) this.harmHostage(hostage.body, damage, hostage.head, hostage.point, direction, weapon)
@@ -1213,7 +1216,8 @@ export class MissionRuntime {
     crosshair.classList.toggle('confirmed-hit', this.hitFlash > 0)
     this.hud.update(dt,this.state,{playing:this.player.playing,enabled:this.player.enabled&&!this.player.immersive,
       weapon:this.grenades?.equipped ? null : this.weapons.current,reloading:this.weapons.reloading,
-      position:this.player.body.position,yaw:new THREE.Euler().setFromQuaternion(this.camera.perspective.quaternion,'YXZ').y,deaths:this.deaths,ready:this.ready})
+      position:this.player.body.position,yaw:new THREE.Euler().setFromQuaternion(this.camera.perspective.quaternion,'YXZ').y,deaths:this.deaths,ready:this.ready,
+      phase:this.ai.phaseStatus?.()})
     // A hostage just killed: keep drawing while he falls (and his blood spreads), until the failure page.
     const failing = performance.now() < this.failingUntil
     if (failing && !active) {

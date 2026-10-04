@@ -166,6 +166,7 @@ export class Grenades {
     this.effects.name = 'Grenades and their effects'
     this.effects.userData.noCollision = true
     hooks.scene.add(this.effects)
+    this.rehearse()
     this.hand = new GrenadeHand(hooks.camera)
     this.belt.className = 'grenade-belt'
     this.belt.setAttribute('aria-label', 'Grenades')
@@ -276,6 +277,21 @@ export class Grenades {
     if (!this.endless) this.counts[kind] = Math.max(0, this.counts[kind] - 1)
     this.hooks.emit({ kind: 'grenade-throw', position: this.frame.eye.clone(), radius: 1.5 })
     this.drawBelt()
+  }
+
+  /**
+   * A grenade thrown by someone else (a guard): from `origin` at `velocity`, bouncing and going off like the player's
+   * own, hurting whoever is near when it does (the player too). It costs the belt nothing.
+   */
+  throwFrom(kind: GrenadeKind, origin: THREE.Vector3, velocity: THREE.Vector3) {
+    if (this.disposed) return
+    const root = grenadeModel(kind)
+    root.position.copy(origin)
+    root.userData.ring.visible = false
+    this.effects.add(root)
+    this.thrown.push({ kind, root, age: 0, rolling: false, still: 0, velocity: velocity.clone(),
+      spin: new THREE.Vector3(Math.random() * 14 - 7, Math.random() * 6 - 3, Math.random() * 14 - 7), by: -1 })
+    this.hooks.emit({ kind: 'grenade-throw', position: origin.clone(), radius: 1.5 })
   }
 
   update(dt: number, frame: GrenadeFrame) {
@@ -514,6 +530,12 @@ export class Grenades {
 
   /** The explosion: a frag is an orange flash and ink rays with grey smoke; a flashbang a white star of rays. */
   private burst(origin: THREE.Vector3, kind: 'frag' | 'flash') {
+    const burst = this.makeBurst(origin, kind)
+    this.effects.add(burst.root)
+    this.bursts.push(burst)
+  }
+
+  private makeBurst(origin: THREE.Vector3, kind: 'frag' | 'flash'): Burst {
     const root = new THREE.Group()
     root.position.copy(origin).add(new THREE.Vector3(0, 0.3, 0))
     const frag = kind === 'frag'
@@ -538,8 +560,27 @@ export class Grenades {
       return puff
     }) : []
     root.add(glow, core, rays, ...puffs)
-    this.effects.add(root)
-    this.bursts.push({ root, age: 0, life: frag ? 2.2 : 0.5, kind, core, glow, rays, puffs })
+    return { root, age: 0, life: frag ? 2.2 : 0.5, kind, core, glow, rays, puffs }
+  }
+
+  /**
+   * One of everything a grenade shows (each kind in flight, both bursts, a smoke puff), hidden, so the loading
+   * screen's shader warm-up (render/warm-up.ts) compiles them: the first grenade of a mission, a guard's included, no
+   * longer stalls a frame (it cost 70-90 ms) while its shaders compile.
+   */
+  private rehearse() {
+    const rehearsal = new THREE.Group()
+    rehearsal.name = 'Grenade effects (for the shader warm-up)'
+    rehearsal.visible = false
+    for (const kind of KINDS) rehearsal.add(grenadeModel(kind))
+    rehearsal.add(this.makeBurst(new THREE.Vector3(), 'frag').root, this.makeBurst(new THREE.Vector3(), 'flash').root)
+    for (const color of [0xffffff, 0xbdbdbd]) {
+      const puff = new THREE.Mesh(sphere, unlit(color))
+      ;(puff.material as THREE.MeshBasicMaterial).side = THREE.DoubleSide
+      puff.add(createPenSilhouette(sphere, 2.2))
+      rehearsal.add(puff)
+    }
+    this.effects.add(rehearsal)
   }
 
   private updateBursts(delta: number) {

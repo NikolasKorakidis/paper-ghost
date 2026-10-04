@@ -912,15 +912,16 @@ export class NeonLights {
   private place(light: Light, viewer: THREE.Vector3) {
     const { sign, spec } = light
     light.brightness = spec.intensity * THREE.MathUtils.clamp(spec.dimmer?.() ?? 1, 0, 1)
+    // Every light, every frame: no closures, no spread arguments (they made garbage here for 150 lights a frame).
     let visible = sign.visible && light.brightness > 1e-3
-    sign.traverseAncestors(parent => { visible &&= parent.visible })
+    for (let parent = sign.parent; visible && parent; parent = parent.parent) visible = parent.visible
     light.visible = visible
     if (!visible) return
     sign.updateWorldMatrix(true, false)
-    light.start.set(...spec.start).applyMatrix4(sign.matrixWorld)
-    light.end.set(...spec.end).applyMatrix4(sign.matrixWorld)
+    light.start.fromArray(spec.start).applyMatrix4(sign.matrixWorld)
+    light.end.fromArray(spec.end).applyMatrix4(sign.matrixWorld)
     light.center.copy(light.start).add(light.end).multiplyScalar(0.5)
-    if (spec.shadowFrom) light.origin.set(...spec.shadowFrom).applyMatrix4(sign.matrixWorld)
+    if (spec.shadowFrom) light.origin.fromArray(spec.shadowFrom).applyMatrix4(sign.matrixWorld)
     else light.origin.copy(light.center)
     light.facing.set(0, 0, 1).transformDirection(sign.matrixWorld)
     light.distance = light.center.distanceTo(viewer)

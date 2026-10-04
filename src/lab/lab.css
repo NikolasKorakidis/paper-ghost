@@ -28,7 +28,7 @@ body { display: flex; }
 #panel .swatch { width: 12px; height: 12px; flex: none; border: 1px solid var(--ink); border-radius: 50%; }
 #panel .swatch.guard { background: #000; }
 #panel .characters button.active .swatch { border-color: var(--paper); }
-#panel .swatch.bulky { border-radius: 2px; background: linear-gradient(#fff 0 45%, #d31d1d 45% 60%, #fff 60%); }
+#panel :is(.swatch.bulky, .swatch.bulky-rodin, .swatch.warden, .swatch.sapper) { border-radius: 2px; background: linear-gradient(#fff 0 45%, #d31d1d 45% 60%, #fff 60%); }
 /* Body colours: a row of swatches, then a free colour picker. */
 #panel .colors { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 #panel .colors button, #panel .custom-color { width: 24px; height: 24px; margin: 0; padding: 0; border: 1px solid var(--ink); border-radius: 50%; }

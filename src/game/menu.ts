@@ -196,6 +196,7 @@ export class MissionMenu {
         <nav class="main-menu" aria-label="Dev mode">
           <button class="main-entry" data-menu-go="level:light-room"><strong>Light room</strong><span>Four lights to switch, things to light: 7 8 9 0, and − for markers</span></button>
           <button class="main-entry" data-menu-go="level:proving-ground"><strong>Proving ground</strong><span>The template level, with guards and goals</span></button>
+          <button class="main-entry" data-menu-go="level:boss-arena"><strong>Boss arena</strong><span>The three bosses modelled with Rodin 3D: the Warden, Bulky Boy, the Sapper</span></button>
         </nav>
       </section>
       <section data-menu-page="options" hidden>

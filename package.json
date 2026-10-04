@@ -20,6 +20,7 @@
     "test:weapons": "node scripts/check-player.mjs scripts/weapon-checks.ts && node scripts/check-player.mjs scripts/starting-loadout-checks.ts && node scripts/check-player.mjs scripts/shotgun-ballistics-checks.ts",
     "test:ai": "node scripts/check-player.mjs scripts/ai-checks.ts && node scripts/check-player.mjs scripts/tactical-ai-checks.ts && node scripts/check-player.mjs scripts/responsive-ai-checks.ts && node scripts/check-player.mjs scripts/fair-awareness-checks.ts && node scripts/check-player.mjs scripts/door-navigation-checks.ts && node scripts/check-player.mjs scripts/ai-reposition-checks.ts",
     "test:tower-patrol": "node scripts/check-player.mjs scripts/tower-patrol-checks.ts",
+    "test:zones": "node scripts/check-player.mjs scripts/zone-ai-checks.ts && node scripts/check-player.mjs scripts/guard-senses-checks.ts && node scripts/check-player.mjs scripts/search-ai-checks.ts && node scripts/check-player.mjs scripts/combat-roles-checks.ts",
     "test:map": "node scripts/check-player.mjs scripts/map-checks.ts",
     "test:levels": "node scripts/check-player.mjs scripts/levels-checks.ts && node scripts/check-player.mjs scripts/goals-checks.ts",
     "test:trees": "node scripts/check-player.mjs scripts/tree-checks.ts",

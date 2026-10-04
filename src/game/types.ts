@@ -22,10 +22,18 @@ export type EnemySpec = { id: string; name: string; position: Vec3; patrol: Vec3
   armor?: number
   /** The armoured brute: huge, slow, immune to instant kills. */
   boss?: boolean
+  /** A boss body modelled with Rodin (game/boss-models.ts) worn in place of the stickman. */
+  look?: import('./boss-models').BossLook
   /** Starts in reserve and only a script wakes it (never the alarm). */
   held?: boolean
   /** The squad he belongs to: alerted together, they hunt you together. Without it, guards near each other form one (DETECTION.squadLink). */
-  squad?: string }
+  squad?: string
+  /** The zone (game/zones.ts) he belongs to, by id. Without it, the zone his post is in or nearest to. */
+  zone?: string
+  /** Frag grenades he carries (default COMBAT_ROLES.grenade.carry for rifles and SMGs, none otherwise). */
+  grenades?: number
+  /** He carries his zone's radio (its operator). Without it, the guard nearest the zone's radio set, or its middle. */
+  radio?: boolean }
 /**
  * The mission on a level: where the player starts, who is there, what can be used, and what has to be done.
  * `level` is the level's id (levels/catalog.ts): saves are kept under it. `goals` are the mission's objectives
@@ -36,6 +44,11 @@ export type MissionWorld = { level: string; root: THREE.Group; stations: Station
   bounds: { minX: number; maxX: number; minZ: number; maxZ: number }; tutorial?: boolean
   goals?: import('./goals').GoalSpec[]
   briefing?: Briefing
+  /**
+   * The level's areas, each with its own alert phase (game/zones.ts). Without them, one per building and its yard, and
+   * one round each squad posted out in the open.
+   */
+  zones?: import('./zones').ZoneSpec[]
   /** Prisoners held on the level, freed by using a station (game/captives.ts). */
   captives?: CaptiveSpec[]
   /** Timed charges: picked up at one station, planted at another, then they go off (game/charges.ts). */
@@ -77,6 +90,14 @@ export type AIContext = { scene: THREE.Scene; world: CollisionWorld; doors: THRE
   mapSpan?: number
   /** Critical hits are on (the tutorial): see CRITICAL_HITS. */
   criticals?: boolean
+  /** The level's authored zones (MissionWorld.zones); without them the director makes them from the buildings. */
+  zones?: import('./zones').ZoneSpec[]
+  /** The field radio sets on the level and whether each still works (game/radios.ts): a zone's sets carry its radio. */
+  radioSets?: () => { id: string; position: THREE.Vector3; live: boolean }[]
+  /** A guard throws a grenade (game/grenades.ts throwFrom): from `origin`, at `velocity`. */
+  throwGrenade?: (kind: 'frag', origin: THREE.Vector3, velocity: THREE.Vector3) => void
+  /** A zone's radio has gone silent (its operator killed, its sets out): it can no longer warn the others. */
+  onRadioLost?: (zone: string) => void
   /**
    * Route planning normally gets 3 ms of each frame, so how far it gets depends on the machine. Checks that replay a
    * run exactly (checkpoint restores) give it this many planning steps a frame instead, which is the same everywhere.

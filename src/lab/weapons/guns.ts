@@ -479,7 +479,7 @@ async function setPosture(posture: Posture, scan = false) {
   else if (pending === 'reload') reload()
 }
 
-const label: Record<GunName, string> = { pistol: 'Pistol', revolver: 'Revolver', smg: 'SMG', ak: 'AK-47', shotgun: 'Shotgun', sniper: 'Sniper', silenced: 'Silenced pistol', knife: 'Combat knife' }
+const label: Record<GunName, string> = { pistol: 'Pistol', revolver: 'Revolver', smg: 'SMG', ak: 'AK-47', shotgun: 'Shotgun', sniper: 'Sniper', silenced: 'Silenced pistol', knife: 'Combat knife', breaker: 'The Breaker (Bulky Boy)' }
 export const actions: Action[] = [
   ...(['stand', 'crouch', 'kneel', 'prone'] as const).map<Action>(posture => ({ group: 'Combat stance',
     label: { stand: 'Stand', crouch: 'Shallow crouch', kneel: 'One knee', prone: 'Prone' }[posture], run: c => api(c).posture(posture) })),

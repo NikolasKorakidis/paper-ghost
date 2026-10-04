@@ -114,9 +114,11 @@ console.log('PASS Guards hear their comrades firing and come to back them up')
   f.step(40)
   const searched = [guard, mate].filter(g => g.searchPoints.length)
   assert(searched.length, 'They search')
+  // Round the body: close in (a body search), or out along a search team's slice of the compass (their zone's sweep).
   for (const g of searched) for (const point of g.searchPoints) {
     const reach = point.distanceTo(body.position)
-    assert(reach >= DETECTION.search.body.reach[0] - 1 && reach <= DETECTION.search.body.reach[1] + 1, `Searching round the body (${reach.toFixed(1)} m out)`)
+    const [near, far] = g.searchKind === 'sweep' ? DETECTION.search.sweep.reach : DETECTION.search.body.reach
+    assert(reach >= near - 3 && reach <= far + 3, `Searching round the body (${reach.toFixed(1)} m out, ${g.searchKind})`)
   }
   f.dispose()
 }
@@ -132,14 +134,17 @@ console.log('PASS A body is seen 25 m off, and starts a body search round it wit
   assert(guard.lastHeading && guard.lastHeading.x > 0.9, 'He saw which way you were going')
   f.move(v(80, 0, 200))
   f.step(40)
-  const first = guard.searchKind === 'lost' && guard.searchPoints[0]
-  assert(first, 'He searches for the lost contact')
+  // His own search for the lost contact, or the search team his zone sends out once no one sees you: either way the
+  // first place is the way you were heading.
+  const kind = guard.searchKind
+  const first = (kind === 'lost' || kind === 'sweep') && guard.searchPoints[0]
+  assert(first, `He searches for the lost contact (${kind})`)
   assert(first.x > 14 * 0.1 + 2, `First where you were heading (${first.x.toFixed(1)} m east of where he lost you)`)
   // A checkpoint keeps what he knows.
   const saved = f.ai.snapshot()
   guard.caution = 0; guard.lastHeading = null; guard.searchKind = 'noise'
   f.ai.restore(saved)
-  assert(guard.caution > 0 && guard.searchKind === 'lost', 'A checkpoint keeps his caution and his search')
+  assert(guard.caution > 0 && guard.searchKind === kind, 'A checkpoint keeps his caution and his search')
   f.dispose()
 }
 console.log('PASS A lost contact is searched for first where you were heading; checkpoints keep it')

@@ -177,7 +177,66 @@ export const DETECTION = {
     noise: { reach: [2.5, 6] as const, points: 3, time: 11 },
     lost: { reach: [3, 9] as const, points: 4, time: 16 },
     body: { reach: [4, 14] as const, points: 5, time: 26 },
+    /** A search team's sweep out from where the trouble was, along its own slice of the compass (ZONES.sweep). */
+    sweep: { reach: [7, 26] as const, points: 4, time: 50 },
   },
+} as const
+
+/**
+ * Zones (game/zones.ts), after Metal Gear Solid V's outposts: each building and its yard is an area with its own
+ * alert phase, and the areas warn each other by radio.
+ *
+ * `yard`: how far round a building its zone reaches (m); `join`: buildings this close (m) are one zone. `reach`: a guard
+ * posted this far outside every zone still belongs to the nearest. `lost`: an alert with no one seeing you for this
+ * long becomes a search. `time`: how long a search and a caution last (s). `shout`: without the radio, only zones this
+ * close (edge to edge, m) hear of trouble. `screen`: how many of a cautious zone's guards go to cover the side the
+ * trouble is on, and how far inside the zone's edge they stand (m). `watch`: how long a cautious guard stops and looks
+ * toward the trouble (s, at random between). `team`: guards per search team; `keep`: guards of a searching zone who stay
+ * at their posts; `sweep.spread`: how wide each team's slice of the compass is (degrees; how far out and for how long:
+ * DETECTION.search.sweep). `reinforce`: how many guards the nearest
+ * cautious zone sends to a zone on alert, if it is within `reinforceReach` m. `radio`: see below.
+ */
+export const ZONES = {
+  yard: 9, join: 3, reach: 40, lost: 8, shout: 45,
+  time: { search: 75, caution: 150 },
+  screen: { guards: 2, inset: 3 },
+  watch: [4, 7] as const,
+  team: 2, keep: 1,
+  sweep: { spread: 50 },
+  reinforce: 2, reinforceReach: 110,
+  /**
+   * The radio (after MGS5's command post): each zone's operator calls a check-in every `interval` seconds (at random
+   * between); a guard who does not answer (dead) is reported missing, the zone goes on caution and the nearest calm
+   * man goes to his post to look. A zone whose operator is dead, or whose radio sets are all out, has no radio.
+   */
+  radio: { interval: [70, 110] as const },
+  /**
+   * The garrison adapts (after MGS5): each time a zone stands down from an alert or a search, the more often it has
+   * been hit (`heat`), the more it changes. From `sentry` on, a man is posted where you were first seen, watching the
+   * way you came (up to `sentries`); from `pairs`, its patrols walk in twos (the second `buddy` m behind); from `helmets`,
+   * its men wear helmets, each of which stops one head shot (a sniper's round goes through), leaving `helmetDamage`.
+   */
+  adapt: { sentry: 1, sentries: 2, pairs: 2, buddy: 1.6, helmets: 3, helmetDamage: 15 },
+} as const
+
+/**
+ * Squad roles in a fight (after Metal Gear Solid V's soldiers).
+ *
+ * `suppress`: when you duck out of sight, one man of the squad (the one holding with the most rounds) keeps firing at
+ * where you were for `time` seconds (from `after` s after losing you, out to `range` m): blind rounds, pressure only,
+ * while the others move. `grenade`: a man with a frag (`carry` each, rifles and SMGs) lobs it at where you went to
+ * ground if you have been out of sight `after` to `until` seconds, `near` to `far` m off, with no comrade within
+ * `clear` m of it; his squad then waits `cooldown` s before the next. `dodge`: a guard within `radius` m of a grenade
+ * landing runs `distance` m from it. `fallBack`: once a squad has lost as many men as it has left, a wounded man (under
+ * `health`) falls back to cover away from you and his zone calls for help again (at most every `call` s). `overwatch`:
+ * a sniper who sees you radios your position every `every` s to the men hunting you within `reach` m.
+ */
+export const COMBAT_ROLES = {
+  suppress: { after: 0.6, time: 6, range: 45 },
+  grenade: { carry: 1, after: 2.5, until: 14, near: 8, far: 28, clear: 7, cooldown: 25 },
+  dodge: { radius: 6, distance: 8, time: 2.5 },
+  fallBack: { health: 70, call: 30 },
+  overwatch: { every: 3, reach: 120 },
 } as const
 
 /**

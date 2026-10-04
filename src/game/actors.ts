@@ -5,7 +5,7 @@ import { Player } from '../lab/player'
 import { makeClip, poseQuat, type Pose } from '../lab/clip'
 import type { Posture } from '../lab/postures'
 import { GAIT_SPEED } from '../lab/gait'
-import { disposeGun, type Gun } from '../lab/weapons/models'
+import { builders, disposeGun, type Gun, type GunName } from '../lab/weapons/models'
 import { createMissionGun } from './weapon-models'
 import { supportHand } from '../lab/weapons/support'
 import { AnimatedHitVolumes, mirrorReactionClip } from './hit-reactions'
@@ -13,6 +13,7 @@ import { bloodPalette } from '../lab/fx/blood-stamps'
 import { createPenLines, createPenSilhouette } from '../render/ballpoint'
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js'
 import { BOSS_RULES } from './balance'
+import { BOSS_LOOKS, wearBossLook, wearRiggedBody, type BossLook, type RiggedBody } from './boss-models'
 import type { EnemyState, WeaponName } from './types'
 
 type Library = {
@@ -64,7 +65,12 @@ const bossGrey = () => Object.assign(new THREE.MeshBasicMaterial({ color: penPal
 export class EnemyActor {
   readonly root: THREE.Group
   readonly player: Player
-  readonly gun: Gun
+  /** A boss body rigged in Blender, following his skeleton (see wearLook). */
+  private body: RiggedBody | null = null
+  /** Bring a Blender-rigged body into his current pose; public for the lab, which drives no update. */
+  followLook() { this.body?.follow() }
+  /** The gun in his right hand; a boss may swap it for his own (see carry). */
+  gun: Gun
   private material: THREE.MeshBasicMaterial
   private outlineMaterials: THREE.Material[] = []
   private mode = ''
@@ -94,6 +100,8 @@ export class EnemyActor {
   /** The head was blown off by a gunshot: it is not drawn, and a stump shows on the neck. */
   headless = false
   private stump: THREE.Mesh | null = null
+  /** The combat helmet an adapted garrison wears (wearHelmet), made on first use. */
+  private guardHelmet: THREE.Group | null = null
   private readonly headUniforms = { headGone: { value: 0 }, headBone: { value: 0 } }
   /**
    * The boss's armour plates: where each one is worn, how it flies once knocked off, and `at`, the fraction of his
@@ -224,6 +232,38 @@ export class EnemyActor {
       pouches.add(pouch, createPenLines([new THREE.Vector3(x - 0.036, 0.025, 0.026), new THREE.Vector3(x + 0.036, 0.025, 0.026)], 4470 + Math.round(x * 100), 'detail', 1))
     }
     wear('chest', pouches, 'pouches', 2 / 3)
+  }
+
+  /**
+   * Wears a boss body modelled with Rodin (boss-models.ts) in place of the stickman, on the same skeleton, so every
+   * clip and hit volume works as before. Call after makeBoss: the armour mechanics stay, but the worn gear is hidden
+   * under the new body.
+   */
+  async wearLook(look: BossLook) {
+    // Rigged in Blender: his own skeleton follows the stickman's. Otherwise the model is fitted to the stickman here.
+    const rigged = BOSS_LOOKS[look].rigged
+    if (rigged) this.body = await wearRiggedBody(this.rig, rigged)
+    else await wearBossLook(this.rig, look)
+    for (const plate of this.plates) plate.object.visible = false
+    const weapon = BOSS_LOOKS[look].weapon
+    if (weapon) this.carry(weapon)
+  }
+
+  /**
+   * Swaps the gun in his hand for another model (a boss's own weapon): same grip, the muzzle flash moved to its
+   * muzzle. Only the look changes; how he fights is still his spec's weapon.
+   */
+  carry(name: GunName) {
+    const old = this.gun, hand = old.parent!, visible = old.visible
+    const gun = builders[name]()
+    gun.position.copy(old.position); gun.quaternion.copy(old.quaternion); gun.visible = visible
+    old.remove(this.flash)
+    hand.remove(old)
+    disposeGun(old)
+    this.flash.position.copy(gun.userData.muzzle)
+    gun.add(this.flash)
+    hand.add(gun)
+    this.gun = gun
   }
 
   /**
@@ -413,6 +453,7 @@ export class EnemyActor {
     this.flash.visible = this.kick > 0.065
     if (this.kick > 0) this.player.adjustBones([this.rig.bones.chest], () => { this.rig.bones.chest.rotation.x -= this.kick * 0.17 })
     this.player.blendPose(this.bodyPosture === 'stand')
+    this.body?.follow()
     // No world-matrix pass here: every reader (eye, muzzle, hit volumes, blood, the renderer) refreshes what it reads.
   }
 
@@ -568,6 +609,39 @@ export class EnemyActor {
     this.player.update(0)
     this.root.updateMatrixWorld(true)
     this.releaseTransientClips()
+  }
+
+  /**
+   * A combat helmet, once his zone has adapted to you (game/ai.ts, ZONES.adapt): black like him, a shell close over
+   * the top of his head with a rim, outlined in ink. It stops one head shot and is knocked off by it (loseHelmet).
+   */
+  wearHelmet() {
+    if (!this.guardHelmet) {
+      this.root.updateMatrixWorld(true)
+      const black = Object.assign(new THREE.MeshBasicMaterial({ color: 0x000000, toneMapped: false }), { defines: { NEON_UNLIT: '' } })
+      const helmet = new THREE.Group()
+      helmet.name = 'Guard helmet'
+      helmet.userData.noCollision = true
+      helmet.position.set(0, 1.505, this.root.worldToLocal(this.rig.bones.head.getWorldPosition(new THREE.Vector3())).z)
+      const shellGeometry = new THREE.SphereGeometry(0.262, 24, 12, 0, Math.PI * 2, 0, Math.PI * 0.52)
+      const shell = new THREE.Mesh(shellGeometry, black)
+      shell.position.y = 0.01
+      shell.scale.set(1, 0.92, 1.06)
+      shell.add(createPenSilhouette(shellGeometry, 2.3))
+      const rimGeometry = new THREE.TorusGeometry(0.27, 0.016, 8, 36).rotateX(Math.PI / 2)
+      const rim = new THREE.Mesh(rimGeometry, black)
+      rim.scale.set(1, 1, 1.06)
+      helmet.add(shell, rim)
+      this.root.add(helmet)
+      this.rig.bones.head.attach(helmet)
+      this.guardHelmet = helmet
+    }
+    this.guardHelmet.visible = true
+  }
+
+  /** The helmet knocked off by a head shot (or not worn after a checkpoint from before he had one). */
+  loseHelmet() {
+    if (this.guardHelmet) this.guardHelmet.visible = false
   }
 
   /** Blow the head off: the head disappears, leaving a bloody stump on the neck. */

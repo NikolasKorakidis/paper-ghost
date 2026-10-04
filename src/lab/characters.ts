@@ -4,6 +4,8 @@ import { Player } from './player'
 import { loadStickman, setOutlineResolution } from './rig'
 import type { Ctx } from './registry'
 import { api as guns } from './weapons/guns'
+import { BOSS_LOOKS, type BossLook } from '../game/boss-models'
+import type { GunName } from './weapons/models'
 
 /**
  * The characters the game builds, all on the one stickman skeleton, so every lab clip plays on each. The hostage
@@ -12,7 +14,15 @@ import { api as guns } from './weapons/guns'
 export const CHARACTERS = [
   { id: 'guard', label: 'Guard', note: 'The stickman soldier (also the hostage and teammates, in their colours)', file: 'stickman-guard' },
   { id: 'bulky', label: 'Bulky Boy', note: 'Tutorial boss: a giant armoured riot breacher with an AK', file: 'bulky-boy' },
+  // Boss bodies modelled with Hyper3D Rodin, worn on the same skeleton (game/boss-models.ts).
+  { id: 'bulky-rodin', label: 'Bulky Boy (Rodin)', note: 'Bulky Boy remodelled with Rodin 3D', file: 'bulky-boy-rodin' },
+  { id: 'warden', label: 'The Warden', note: 'Boss (Rodin): the prison warden in his long leather coat and peaked cap', file: 'the-warden' },
+  { id: 'sapper', label: 'The Sapper', note: 'Boss (Rodin): a demolition man in a padded bomb-disposal suit', file: 'the-sapper' },
 ] as const
+/** The Rodin body each boss character wears (none: the stickman with Bulky Boy's fitted armour). */
+const LOOKS: Partial<Record<CharacterId, BossLook>> = { 'bulky-rodin': 'bulky', warden: 'warden', sapper: 'sapper' }
+/** The gun a boss character carries in the lab: his own (the Breaker for Bulky Boy), else the AK. */
+const weaponOf = (id: CharacterId): GunName => { const look = LOOKS[id]; return (look && BOSS_LOOKS[look].weapon) || 'ak' }
 export type CharacterId = typeof CHARACTERS[number]['id']
 
 /** Body colours: the game's own, and any other from the colour picker. */
@@ -55,6 +65,8 @@ export async function switchCharacter(ctx: Ctx, id: CharacterId, controls?: Orbi
       const enemy = await EnemyActor.create('ak')
       enemy.gun.visible = false
       enemy.makeBoss()
+      const look = LOOKS[id]
+      if (look) await enemy.wearLook(look)
       actor = enemy as unknown as Actor
       rig = enemy.rig
       root = enemy.root
@@ -75,7 +87,7 @@ export async function switchCharacter(ctx: Ctx, id: CharacterId, controls?: Orbi
     player.play(ctx.clips.idle, { loop: true, fade: 0 })
     Object.assign(state, { id, actor, armor: 1, down: false })
     // His AK in hand, as in the fight.
-    if (id === 'bulky') guns(ctx).equip('ak')
+    if (id !== 'guard') guns(ctx).equip(weaponOf(id))
     setColor(ctx, state.color)
     if (controls) frame(ctx, controls)
   } finally { state.loading = false }
@@ -206,14 +218,16 @@ export function exportSheet(ctx: Ctx, renderer: THREE.WebGLRenderer) {
 /** Bulky Boy in the lab: his shot-off gear falls and comes to rest on the ground. */
 export function update(dt: number, ctx: Ctx) {
   const state = ctx.fx.character as Current | undefined
-  if (!state?.actor || state.id !== 'bulky') return
+  if (!state?.actor || state.id === 'guard') return
   // Gear that has been shot off falls and comes to rest on the ground.
   state.actor.dropPlates?.(Math.min(dt, 0.05))
+  // A body rigged in Blender takes the pose the lab gave his skeleton this frame.
+  ;(state.actor as Actor & { followLook?: () => void }).followLook?.()
 }
 
 const bulky = (ctx: Ctx) => {
   const state = current(ctx)
-  return state.id === 'bulky' && state.actor ? state as Current & { actor: Actor } : null
+  return state.id !== 'guard' && state.actor ? state as Current & { actor: Actor } : null
 }
 /** Play one of his body clips; `once` returns to the idle afterwards. The lab's gun tools take his arms back after. */
 const play = (ctx: Ctx, clip: string, once = false) => {
@@ -229,7 +243,8 @@ const gun = (ctx: Ctx, use: (api: ReturnType<typeof guns>) => void) => {
   if (!state) return
   if (state.down) getUp(ctx)
   const api = guns(ctx)
-  if (api.current?.userData.name !== 'ak') api.equip('ak')
+  const weapon = weaponOf(state.id)
+  if (api.current?.userData.name !== weapon) api.equip(weapon)
   use(api)
 }
 /** Every plate back on, standing, AK in hand. */
@@ -238,7 +253,7 @@ const getUp = (ctx: Ctx) => {
   if (!state) return
   ;(state.actor as unknown as { refitArmor(): void }).refitArmor()
   Object.assign(state, { armor: 1, down: false })
-  guns(ctx).equip('ak')
+  guns(ctx).equip(weaponOf(state.id))
 }
 
 /** Bulky Boy's moves, listed under his character in the lab panel. */

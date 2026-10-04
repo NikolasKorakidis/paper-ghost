@@ -31,6 +31,66 @@ const none: never[] = []
 // Shared by every world and region view, because views share collider records.
 let queries = 0
 
+/**
+ * Does a ray from `o` (with `inv`, the reciprocal of its direction, no component infinite) pass through `box` within
+ * `far`? The slab test on plain numbers: Ray.intersectsBox makes garbage on this hot path, and does not stop at `far`.
+ */
+function rayHitsBox(o: THREE.Vector3, inv: THREE.Vector3, box: THREE.Box3, far: number) {
+  let t1 = (box.min.x - o.x) * inv.x, t2 = (box.max.x - o.x) * inv.x
+  let near = Math.min(t1, t2), farthest = Math.max(t1, t2)
+  t1 = (box.min.y - o.y) * inv.y; t2 = (box.max.y - o.y) * inv.y
+  near = Math.max(near, Math.min(t1, t2)); farthest = Math.min(farthest, Math.max(t1, t2))
+  t1 = (box.min.z - o.z) * inv.z; t2 = (box.max.z - o.z) * inv.z
+  near = Math.max(near, Math.min(t1, t2)); farthest = Math.min(farthest, Math.max(t1, t2))
+  return farthest >= Math.max(near, 0) && near <= far
+}
+
+const plane = new THREE.Plane(), crossing = new THREE.Vector3(), push = new THREE.Vector3()
+const closest1 = new THREE.Vector3(), closest2 = new THREE.Vector3(), lineR = new THREE.Vector3(), lineS = new THREE.Vector3(), lineW = new THREE.Vector3()
+
+/** Octree's lineToLineClosestPoints, the same arithmetic in the same order, into closest1 / closest2. */
+function closestPoints(start1: THREE.Vector3, end1: THREE.Vector3, start2: THREE.Vector3, end2: THREE.Vector3) {
+  const r = lineR.copy(end1).sub(start1), s = lineS.copy(end2).sub(start2), w = lineW.copy(start2).sub(start1)
+  const a = r.dot(s), b = r.dot(r), c = s.dot(s), d = s.dot(w), e = r.dot(w)
+  let t1: number, t2: number
+  const divisor = b * c - a * a
+  if (Math.abs(divisor) < 1e-10) {
+    const d1 = -d / c, d2 = (a - d) / c
+    if (Math.abs(d1 - 0.5) < Math.abs(d2 - 0.5)) { t1 = 0; t2 = d1 } else { t1 = 1; t2 = d2 }
+  } else {
+    t1 = (d * a + e * c) / divisor
+    t2 = (t1 * a - d) / c
+  }
+  t2 = Math.max(0, Math.min(1, t2))
+  t1 = Math.max(0, Math.min(1, t1))
+  closest1.copy(r).multiplyScalar(t1).add(start1)
+  closest2.copy(s).multiplyScalar(t2).add(start2)
+}
+
+/**
+ * Octree.triangleCapsuleIntersect without its allocations: how far the face pushes the capsule out, along `push`
+ * (0 when it does not touch it). The same tests in the same order, so its answers are Octree's to the last bit.
+ */
+function trianglePush(capsule: Capsule, face: THREE.Triangle) {
+  face.getPlane(plane)
+  const d1 = plane.distanceToPoint(capsule.start) - capsule.radius, d2 = plane.distanceToPoint(capsule.end) - capsule.radius
+  if ((d1 > 0 && d2 > 0) || (d1 < -capsule.radius && d2 < -capsule.radius)) return 0
+  const delta = Math.abs(d1 / (Math.abs(d1) + Math.abs(d2)))
+  if (face.containsPoint(crossing.copy(capsule.start).lerp(capsule.end, delta))) {
+    push.copy(plane.normal)
+    return Math.abs(Math.min(d1, d2))
+  }
+  const r2 = capsule.radius * capsule.radius
+  for (let edge = 0; edge < 3; edge++) {
+    closestPoints(capsule.start, capsule.end, edge === 0 ? face.a : edge === 1 ? face.b : face.c, edge === 0 ? face.b : edge === 1 ? face.c : face.a)
+    if (closest1.distanceToSquared(closest2) < r2) {
+      push.copy(closest1).sub(closest2).normalize()
+      return capsule.radius - closest1.distanceTo(closest2)
+    }
+  }
+  return 0
+}
+
 /** Partition triangles without duplicating large coplanar slabs into many octants. */
 function collisionTree(geometry: THREE.BufferGeometry) {
   const position = geometry.getAttribute('position'), index = geometry.index
@@ -66,6 +126,10 @@ export class CollisionWorld {
   private proxies: THREE.Mesh[] = []
   private capsule = new Capsule()
   private bounds = new THREE.Box3()
+  private movedCapsule = new Capsule()
+  private capsuleHit = false
+  private movedCenter = new THREE.Vector3()
+  private capsuleCenter = new THREE.Vector3()
   private offset = new THREE.Vector3()
   private ray = new THREE.Raycaster()
   private groundRay = new THREE.Ray()
@@ -76,10 +140,17 @@ export class CollisionWorld {
   private faceCount = 0
   private rayPoint = new THREE.Vector3()
   private nearestPoint = new THREE.Vector3()
+  /** The reciprocal of the current local ray's direction, and how far along it a query reaches (local units). */
+  private inverseDirection = new THREE.Vector3()
+  private localFar = Infinity
+  private farPoint = new THREE.Vector3()
   // Static colliders by 8 m XZ cell, so NPC floor probes skip the other ~850 meshes.
   // `wide` holds moving colliders and slabs spanning many cells; both lists are scanned.
   private cells: Map<number, Collider[]> | null = null
   private wide: Collider[] = []
+  /** The colliders along the current ray (rayColliders), and how many of the list are in use. */
+  private rayList: Collider[] = []
+  private rayCount = 0
 
   constructor(scene: THREE.Object3D) {
     scene.updateWorldMatrix(true, true)
@@ -130,6 +201,35 @@ export class CollisionWorld {
     return this.cells
   }
 
+  /**
+   * The colliders a ray from `origin` along `direction` (unit length) can meet within `far`: the moving and wide ones,
+   * and those of each 8 m cell the ray crosses, walked cell by cell (Amanatides and Woo). Rays used to test all of the
+   * level's thousands of colliders; most of a long sight line crosses a few cells. Reuses one list.
+   */
+  private rayColliders(origin: THREE.Vector3, direction: THREE.Vector3, far: number) {
+    const cells = this.index(), list = this.rayList, query = ++queries
+    let count = 0
+    for (let w = 0; w < this.wide.length; w++) { const collider = this.wide[w]; collider.query = query; list[count++] = collider }
+    let x = Math.floor(origin.x / 8), z = Math.floor(origin.z / 8)
+    const stepX = direction.x > 0 ? 1 : -1, stepZ = direction.z > 0 ? 1 : -1
+    const deltaX = Math.abs(direction.x) > 1e-9 ? 8 / Math.abs(direction.x) : Infinity, deltaZ = Math.abs(direction.z) > 1e-9 ? 8 / Math.abs(direction.z) : Infinity
+    let nextX = Math.abs(direction.x) > 1e-9 ? ((x + (stepX > 0 ? 1 : 0)) * 8 - origin.x) / direction.x : Infinity
+    let nextZ = Math.abs(direction.z) > 1e-9 ? ((z + (stepZ > 0 ? 1 : 0)) * 8 - origin.z) / direction.z : Infinity
+    for (let guard = 0; guard < 4096; guard++) {
+      const cell = cells.get((x + 32768) * 65536 + z + 32768) ?? none
+      for (let c = 0; c < cell.length; c++) {
+        const collider = cell[c]
+        if (collider.query === query) continue
+        collider.query = query
+        list[count++] = collider
+      }
+      if (Math.min(nextX, nextZ) > far) break
+      if (nextX < nextZ) { x += stepX; nextX += deltaX } else { z += stepZ; nextZ += deltaZ }
+    }
+    this.rayCount = count
+    return list
+  }
+
   private cell(x: number, z: number) {
     return this.index().get((Math.floor(x / 8) + 32768) * 65536 + Math.floor(z / 8) + 32768) ?? none
   }
@@ -150,12 +250,55 @@ export class CollisionWorld {
     }
   }
 
-  /** Octree.getRayTriangles without its per-ray array and duplicate scan; these trees hold each face in one leaf. */
+  /**
+   * Octree.getRayTriangles without its per-ray array and duplicate scan; these trees hold each face in one leaf. Only
+   * boxes within the query's reach are visited (see localRay), with a slab test that makes no garbage.
+   */
   private collect(tree: Octree, ray: THREE.Ray) {
-    for (const subTree of tree.subTrees) {
-      if (!ray.intersectsBox(subTree.box!)) continue
-      if (subTree.triangles.length > 0) for (const face of subTree.triangles) this.faces[this.faceCount++] = face
+    // Indexed loops: on this path (thousands of boxes a frame) for...of iterators were most of the game's garbage.
+    const subTrees = tree.subTrees
+    for (let i = 0; i < subTrees.length; i++) {
+      const subTree = subTrees[i], triangles = subTree.triangles
+      if (!rayHitsBox(ray.origin, this.inverseDirection, subTree.box!, this.localFar)) continue
+      if (triangles.length > 0) for (let j = 0; j < triangles.length; j++) this.faces[this.faceCount++] = triangles[j]
       else this.collect(subTree, ray)
+    }
+  }
+
+  /** Put the world ray (`this.ray.ray`, reaching `far`) into a collider's own space for collect. */
+  private localRay(collider: Collider, far: number) {
+    this.groundRay.copy(this.ray.ray).applyMatrix4(collider.inverse)
+    const d = this.groundRay.direction
+    this.inverseDirection.set(1 / (d.x || 1e-12), 1 / (d.y || 1e-12), 1 / (d.z || 1e-12))
+    // Its reach in local units (the collider may be scaled).
+    this.localFar = Number.isFinite(far) ? this.farPoint.copy(this.ray.ray.direction).multiplyScalar(far).add(this.ray.ray.origin).applyMatrix4(collider.inverse).distanceTo(this.groundRay.origin) + 1e-4 : Infinity
+    this.faceCount = 0
+  }
+
+  /**
+   * Octree.capsuleIntersect's depth without its allocations: the faces whose boxes the (local) capsule reaches, each
+   * pushing it out in turn, and how far it moved in all. Identical to Octree (scripts/collision-index-checks.ts).
+   */
+  private capsuleDepth(tree: Octree, capsule: Capsule) {
+    this.movedCapsule.copy(capsule)
+    this.capsuleHit = false
+    this.pushOut(tree, capsule)
+    if (!this.capsuleHit) return 0
+    return this.movedCapsule.getCenter(this.movedCenter).sub(capsule.getCenter(this.capsuleCenter)).length()
+  }
+
+  /** capsuleDepth's walk: boxes the unmoved capsule reaches, faces pushing movedCapsule out in turn. */
+  private pushOut(node: Octree, capsule: Capsule) {
+    const subTrees = node.subTrees
+    for (let i = 0; i < subTrees.length; i++) {
+      const subTree = subTrees[i], triangles = subTree.triangles
+      if (!capsule.intersectsBox(subTree.box!)) continue
+      if (triangles.length > 0) {
+        for (let j = 0; j < triangles.length; j++) {
+          const depth = trianglePush(this.movedCapsule, triangles[j])
+          if (depth) { this.capsuleHit = true; this.movedCapsule.translate(push.multiplyScalar(depth)) }
+        }
+      } else this.pushOut(subTree, capsule)
     }
   }
 
@@ -178,12 +321,15 @@ export class CollisionWorld {
     return this.bounds
   }
 
-  fits(capsule: Capsule, ignored: readonly THREE.Object3D[] = []) {
+  fits(capsule: Capsule, ignored: readonly THREE.Object3D[] = none) {
     const bounds = this.capsuleBounds(capsule), cells = this.index(), query = ++queries
-    for (const collider of this.wide) if (this.obstructs(collider, bounds, capsule, ignored)) return false
+    const wide = this.wide
+    for (let w = 0; w < wide.length; w++) if (this.obstructs(wide[w], bounds, capsule, ignored)) return false
     for (let i = Math.floor(bounds.min.x / 8); i <= Math.floor(bounds.max.x / 8); i++) {
       for (let j = Math.floor(bounds.min.z / 8); j <= Math.floor(bounds.max.z / 8); j++) {
-        for (const collider of cells.get((i + 32768) * 65536 + j + 32768) ?? none) {
+        const cell = cells.get((i + 32768) * 65536 + j + 32768) ?? none
+        for (let c = 0; c < cell.length; c++) {
+          const collider = cell[c]
           // A mesh can occupy several of the touched cells.
           if (collider.query === query) continue
           collider.query = query
@@ -199,8 +345,12 @@ export class CollisionWorld {
     for (let object: THREE.Object3D | null = collider.mesh; object; object = object.parent) {
       if (ignored.includes(object)) return false
     }
-    const hit = this.collision(collider, capsule)
-    return !!hit && hit.depth > 0.008
+    // The capsule in the collider's space, for Octree's overlap test minus its garbage (the player's own physics, in
+    // resolve, still uses Octree.capsuleIntersect for the push-out).
+    this.capsule.copy(capsule)
+    this.capsule.start.applyMatrix4(collider.inverse)
+    this.capsule.end.applyMatrix4(collider.inverse)
+    return this.capsuleDepth(this.tree(collider), this.capsule) > 0.008
   }
 
   resolve(capsule: Capsule, velocity: THREE.Vector3) {
@@ -235,12 +385,12 @@ export class CollisionWorld {
       this.ray.near = 0
       this.ray.far = above + below
       const local = this.cell(x, z)
-      for (let pass = 0; pass < 2; pass++) for (const collider of pass ? local : this.wide) {
+      for (let pass = 0; pass < 2; pass++) for (let c = 0, list = pass ? local : this.wide; c < list.length; c++) {
+        const collider = list[c]
         // A vertical ray meets a box exactly when its column does.
         const { min, max } = collider.bounds
         if (max.y < bottom || min.y > top || x < min.x || x > max.x || z < min.z || z > max.z) continue
-        this.groundRay.copy(this.ray.ray).applyMatrix4(collider.inverse)
-        this.faceCount = 0
+        this.localRay(collider, this.ray.far)
         this.collect(this.tree(collider), this.groundRay)
         // Octree.rayIntersect's nearest front face, with its arithmetic, minus its allocations.
         let nearest: THREE.Triangle | null = null, distance = 1e100
@@ -263,7 +413,9 @@ export class CollisionWorld {
     this.ray.ray.direction.copy(to).sub(from).normalize()
     this.ray.near = 0.02
     this.ray.far = Math.max(0.02, from.distanceTo(to) - 0.06)
-    for (const collider of this.colliders) {
+    const candidates = this.rayColliders(this.ray.ray.origin, this.ray.ray.direction, this.ray.far)
+    for (let c = 0; c < this.rayCount; c++) {
+      const collider = candidates[c]
       if (!collider.blocksSight) continue
       let ignored = false
       for (let object: THREE.Object3D | null = collider.mesh; object; object = object.parent) {
@@ -289,8 +441,7 @@ export class CollisionWorld {
   private blocksRay(collider: Collider) {
     const { mesh } = collider, material = mesh.material
     if (Array.isArray(material) || !this.large(collider)) return this.ray.intersectObject(mesh, false).length > 0
-    this.groundRay.copy(this.ray.ray).applyMatrix4(collider.inverse)
-    this.faceCount = 0
+    this.localRay(collider, this.ray.far)
     this.collect(this.tree(collider), this.groundRay)
     for (let i = 0; i < this.faceCount; i++) {
       const face = this.faces[i]
@@ -309,12 +460,13 @@ export class CollisionWorld {
     this.ray.near = 0.01
     this.ray.far = range
     let distance = range
-    for (const collider of this.colliders) {
+    const candidates = this.rayColliders(origin, this.ray.ray.direction, range)
+    for (let c = 0; c < this.rayCount; c++) {
+      const collider = candidates[c]
       if (!collider.blocksShots) continue
       if (!this.reaches(collider)) continue
       if ((this.spatialRays || this.large(collider)) && !Array.isArray(collider.mesh.material)) {
-        this.groundRay.copy(this.ray.ray).applyMatrix4(collider.inverse)
-        this.faceCount = 0
+        this.localRay(collider, distance)
         this.collect(this.tree(collider), this.groundRay)
         const side = collider.mesh.material.side
         for (let i = 0; i < this.faceCount; i++) {
@@ -339,7 +491,9 @@ export class CollisionWorld {
     this.ray.near = 0.01
     this.ray.far = range
     let closest: SurfaceHit | null = null
-    for (const collider of this.colliders) {
+    const candidates = this.rayColliders(origin, this.ray.ray.direction, range)
+    for (let c = 0; c < this.rayCount; c++) {
+      const collider = candidates[c]
       if (!collider.blocksShots || !this.reaches(collider)) continue
       const hit = this.ray.intersectObject(collider.mesh, false)[0]
       if (!hit?.face || hit.distance >= (closest?.distance ?? range)) continue

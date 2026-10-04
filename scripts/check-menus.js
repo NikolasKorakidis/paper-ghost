@@ -68,7 +68,7 @@
     check(page() === 'gallery' && document.activeElement === $(`${GALLERY} [data-menu-open="views"]`), 'Escape from Map views returns to the Gallery')
     click(`${GALLERY} [data-menu-open="dev"]`)
     const rooms = [...document.querySelectorAll('[data-menu-page="dev"] [data-menu-go]')].map(entry => entry.dataset.menuGo)
-    check(page() === 'dev' && singlePage() && JSON.stringify(rooms) === JSON.stringify(['level:light-room', 'level:proving-ground']), `Dev mode lists the light room and the proving ground: ${rooms}`)
+    check(page() === 'dev' && singlePage() && JSON.stringify(rooms) === JSON.stringify(['level:light-room', 'level:proving-ground', 'level:boss-arena']), `Dev mode lists the light room, the proving ground and the boss arena: ${rooms}`)
     key('Escape')
     check(page() === 'gallery' && document.activeElement === $(`${GALLERY} [data-menu-open="dev"]`), 'Escape from Dev mode returns to the Gallery, on Dev mode')
     key('Escape')

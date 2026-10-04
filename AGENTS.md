@@ -22,7 +22,7 @@ npm run test:<area>  # focused suite, see table
 | You touched                                                 | Run                                                                          |
 | ----------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | `src/player/` movement, collision, ladders                  | `test:player`, `test:traversal-audio`, `test:fall-damage`                    |
-| `src/game/ai.ts`, `navigation.ts`                           | `test:ai`, `test:tower-patrol`                                               |
+| `src/game/ai.ts`, `navigation.ts`, `zones.ts`, `flashlights.ts` | `test:ai`, `test:tower-patrol`, `test:zones`                             |
 | `src/game/weapons.ts`, `weapon-models.ts`, bullets, impacts | `test:weapons`, `test:bullets`, `test:polish`                                |
 | mission flow, hostage, jeep, security, gate                 | `test:rescue`, `test:escape`, `test:mission`                                 |
 | player damage / death                                       | `test:player-hits`, `test:player-death`                                      |
@@ -36,7 +36,7 @@ npm run test:<area>  # focused suite, see table
 - `index.html` → `src/main.ts`: the game. `/?explore=1` is free exploration + experimental Quest WebXR. `/?view=overview` (also `yard`, `rail`, `tanks`, `plan`, `roof`, `mess`, `office`, `water`, `watch`) are inspection camera bookmarks, and `/?tutorial=1` is the training level. The player never sees these: the menu switches modes on the same address (`src/modes.ts`; game ↔ tutorial in place without a reload), and a bookmark's parameter is cleared from the address bar once read. A refresh returns to the game.
 - `lab.html` → `src/lab/main.ts`: character/animation lab. **The lab rig, clips and postures are shared with the game's enemies and hostage — an animation change affects both.** Read `src/lab/README.md` first.
 - `src/levels/`: the level registry. `catalog.ts` lists every level (campaign, training, dev); `index.ts` builds one by id; `proving-ground.ts` is the template. **Read `src/levels/README.md` before building a level.** `/?level=<id>` plays any level in dev; a level's goals (`game/goals.ts`) drive its objectives, saves, co-op and the win.
-- `src/game/`: mission runtime (`runtime.ts`, `mission.ts`), AI, weapons, HUD/menu, audio, effects. Tunables live in `balance.ts`.
+- `src/game/`: mission runtime (`runtime.ts`, `mission.ts`), AI, weapons, HUD/menu, audio, effects. Tunables live in `balance.ts`. The guards' brain is `ai.ts` (senses, squads, combat roles, radio, garrison), `zones.ts` (each building's area, its alert phase and memory, after Metal Gear Solid V), `flashlights.ts` (torches in dark rooms) and `navigation.ts` (routes); read `src/game/AI.md` before changing it.
 - `src/world/`: compound geometry built in code from plan coordinates (0.15 m per reference pixel, north = −Z).
 - `src/player/`: capsule controller, collision trees, ladders. Physics substeps are ≤ 1/120 s.
 - `src/render/ink.ts`: the shared paper/ink materials. Use these; don't create ad-hoc materials.

@@ -14,6 +14,7 @@ export const LEVEL_CATALOG = [
   { id: 'training', name: 'Training ground', kind: 'training', summary: 'Every move, one lesson at a time, then Bulky Boy.' },
   { id: 'proving-ground', name: 'Proving ground', kind: 'dev', summary: 'Template level: take the intel, eliminate the officer, get to the extraction point.' },
   { id: 'light-room', name: 'Light room', kind: 'dev', summary: 'One dark room, four lights to switch, things to light: for working on the lighting.' },
+  { id: 'boss-arena', name: 'Boss arena', kind: 'dev', summary: 'The three Rodin bosses on their plinths: the Warden, Bulky Boy and the Sapper.' },
 ] as const satisfies readonly LevelInfo[]
 
 export type LevelId = typeof LEVEL_CATALOG[number]['id']
