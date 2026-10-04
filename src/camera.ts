@@ -35,6 +35,8 @@ export class EnvironmentCamera {
   private direction = new THREE.Vector3()
   private sideways = new THREE.Vector3()
   private delta = new THREE.Vector3()
+  /** The level the overview and the plan frame (all of it), when one is known. */
+  private levelBounds: { minX: number; maxX: number; minZ: number; maxZ: number } | null = null
 
   constructor(private canvas: HTMLCanvasElement, private invalidate: () => void) {
     this.orbit = new OrbitControls(this.active, canvas)
@@ -62,11 +64,39 @@ export class EnvironmentCamera {
     this.setView('overview')
   }
 
+  /** Frame this level in the overview and the plan, so they show all of it (not just the compound's middle). */
+  frameLevel(bounds: { minX: number; maxX: number; minZ: number; maxZ: number }) {
+    this.levelBounds = bounds
+    this.resize(this.width, this.height)
+  }
+
+  /** Where a view looks from and at: the overview and the plan fit the level; the rest are fixed bookmarks. */
+  private preset(name: ViewName): { position: [number, number, number]; target: [number, number, number] } {
+    const b = this.levelBounds
+    if (!b || (name !== 'overview' && name !== 'plan')) return views[name]
+    const cx = (b.minX + b.maxX) / 2, cz = (b.minZ + b.maxZ) / 2
+    if (name === 'plan') return { position: [cx, 240, cz + 0.001], target: [cx, 0, cz] }
+    // High over the south-west corner, as close as it can be with all four corners of the area on screen.
+    const direction = new THREE.Vector3(-0.55, 0.62, 0.56).normalize(), target = new THREE.Vector3(cx, 0, cz)
+    const probe = new THREE.PerspectiveCamera(38, this.width / this.height || 1.6, 1, 4000)
+    const corners = [[b.minX, b.minZ], [b.maxX, b.minZ], [b.minX, b.maxZ], [b.maxX, b.maxZ]].map(([x, z]) => new THREE.Vector3(x, 0, z))
+    let distance = Math.hypot(b.maxX - b.minX, b.maxZ - b.minZ) * 0.3
+    for (let tries = 0; tries < 60; tries++, distance *= 1.06) {
+      probe.position.copy(target).addScaledVector(direction, distance)
+      probe.lookAt(target); probe.updateMatrixWorld(); probe.updateProjectionMatrix()
+      if (corners.every(corner => { const p = corner.clone().project(probe); return Math.abs(p.x) < 0.94 && Math.abs(p.y) < 0.9 })) break
+    }
+    const from = direction.multiplyScalar(distance)
+    return { position: [cx + from.x, from.y, cz + from.z], target: [cx, 0, cz] }
+  }
+
   resize(width: number, height: number) {
     this.width = width; this.height = height
     this.perspective.aspect = width / height
     this.perspective.updateProjectionMatrix()
-    const halfHeight = Math.max(86, 122 / this.perspective.aspect)
+    const b = this.levelBounds
+    const halfHeight = b ? Math.max((b.maxZ - b.minZ) / 2, (b.maxX - b.minX) / 2 / this.perspective.aspect) * 1.04
+      : Math.max(86, 122 / this.perspective.aspect)
     this.orthographic.left = -halfHeight * this.perspective.aspect
     this.orthographic.right = halfHeight * this.perspective.aspect
     this.orthographic.top = halfHeight
@@ -85,7 +115,7 @@ export class EnvironmentCamera {
     this.view = name
     this.active = name === 'plan' ? this.orthographic : this.perspective
     this.orbit.object = this.active
-    const preset = views[name]
+    const preset = this.preset(name)
     this.active.position.fromArray(preset.position)
     if (name === 'overview' && this.width / this.height < 1.3) {
       this.active.position.sub(new THREE.Vector3(...preset.target)).multiplyScalar(1.3 / (this.width / this.height)).add(new THREE.Vector3(...preset.target))

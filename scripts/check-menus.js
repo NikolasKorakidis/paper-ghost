@@ -57,14 +57,20 @@
     key('Escape')
     check(page() === 'home' && document.activeElement === $(`${HOME} [data-menu-open="campaign"]`) && !p.playing, 'Escape from Campaign returns to the main menu, on Campaign')
 
-    // Gallery: map views, free roam and the lab.
+    // Gallery: map views, free roam, the lab and dev mode.
     click(`${HOME} [data-menu-open="gallery"]`)
-    check(page() === 'gallery' && singlePage() && JSON.stringify(entries('gallery')) === JSON.stringify(['views', 'explore', 'lab']), `Gallery holds map views, free roam and the lab: ${entries('gallery')}`)
+    check(page() === 'gallery' && singlePage() && JSON.stringify(entries('gallery')) === JSON.stringify(['views', 'explore', 'lab', 'dev']), `Gallery holds map views, free roam, the lab and dev mode: ${entries('gallery')}`)
     click(`${GALLERY} [data-menu-open="views"]`)
     const views = [...document.querySelectorAll('[data-menu-page="views"] [data-menu-go]')].map(entry => entry.dataset.menuGo)
-    check(page() === 'views' && singlePage() && views.length === 10 && views.every(view => view.startsWith('view:')), 'Map views lists all ten inspection cameras')
+    check(page() === 'views' && singlePage() && views.length === 12 && views.every(view => view.startsWith('view:')) && views.includes('view:overview@town') && views.includes('view:plan@town'),
+      'Map views lists the ten compound cameras and the town overview and plan')
     key('Escape')
     check(page() === 'gallery' && document.activeElement === $(`${GALLERY} [data-menu-open="views"]`), 'Escape from Map views returns to the Gallery')
+    click(`${GALLERY} [data-menu-open="dev"]`)
+    const rooms = [...document.querySelectorAll('[data-menu-page="dev"] [data-menu-go]')].map(entry => entry.dataset.menuGo)
+    check(page() === 'dev' && singlePage() && JSON.stringify(rooms) === JSON.stringify(['level:light-room', 'level:proving-ground']), `Dev mode lists the light room and the proving ground: ${rooms}`)
+    key('Escape')
+    check(page() === 'gallery' && document.activeElement === $(`${GALLERY} [data-menu-open="dev"]`), 'Escape from Dev mode returns to the Gallery, on Dev mode')
     key('Escape')
     check(page() === 'home' && document.activeElement === $(`${HOME} [data-menu-open="gallery"]`), 'Escape from the Gallery returns to the main menu')
 

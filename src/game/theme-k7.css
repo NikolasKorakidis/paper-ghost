@@ -184,9 +184,10 @@ html[data-input="keys"] #walk-hud #walk-pause .walk-card :is(button, summary, a)
   transition: color 0.12s, text-shadow var(--glow-in) ease var(--glow-delay);
 }
 #walk-hud #walk-pause .mission-menu-links { border-top-color: #ffffff1f; }
-#walk-hud #walk-pause kbd { color: var(--k7-bone); }
+#walk-hud #walk-pause kbd { color: var(--k7-black); }
+/* Keys are white caps with black letters, in the menus as over the world. */
 #walk-hud #walk-pause .menu-back kbd, #walk-hud #walk-pause .mission-keys kbd {
-  padding: 2px 7px; border: 1px solid var(--k7-bone); border-radius: 0; background: var(--k7-black);
+  padding: 2px 7px; border: 1px solid #fff; border-radius: 0; background: #fff; color: var(--k7-black);
   font: 400 12px/1.2 var(--k7-display); letter-spacing: 0.08em; text-transform: uppercase;
 }
 #walk-hud #walk-pause :is(.mission-keys > div, .mission-settings label:has([type="checkbox"]), .mission-tips) { border-color: #ffffff1a; }
@@ -202,28 +203,29 @@ html[data-input="keys"] #walk-hud #walk-pause .walk-card :is(button, summary, a)
 #walk-hud #walk-pause .mission-recap dd { color: var(--k7-bone); font: 400 40px/1 var(--k7-display); text-shadow: 3px 3px 0 var(--k7-red); }
 #walk-hud #walk-pause #vr-panel { color: var(--ink-muted); }
 
-/* The briefing: a manga page. The map is a panel of its own; the mission's name is a title card in the corner. */
-#walk-hud #walk-pause .briefing .briefing-map {
-  background: var(--k7-tone), #070707;
-  border: 3px solid var(--k7-bone);
-  border-radius: 0;
-  box-shadow: 8px 8px 0 #e3261d55;
+/*
+ * The briefing: a quiet page in black and white. The map is a panel of its own, ruled in bone; the headings are small
+ * spaced capitals; the only red left is the Start button.
+ */
+#walk-hud #walk-pause .briefing .briefing-top, #walk-hud #walk-pause .briefing .briefing-map { border-color: #ffffff2e; }
+#walk-hud #walk-pause .briefing .briefing-map { background: var(--k7-tone), #070707; border: 2px solid var(--k7-bone); border-radius: 0; box-shadow: none; }
+#walk-hud #walk-pause .field-map svg { filter: none; }
+#walk-hud #walk-pause .briefing .briefing-kicker { color: var(--k7-gray); font: 400 13px/1 var(--k7-display); letter-spacing: 0.34em; text-transform: uppercase; }
+#walk-hud #walk-pause .briefing h2 { font-size: 64px; transform: skewX(-7deg); transform-origin: 100% 100%; margin-right: 0; text-shadow: 3px 3px 0 #ffffff26; }
+@media (max-width: 540px) {
+  #walk-hud #walk-pause .briefing h2 { font-size: 44px; transform-origin: 0 100%; }
+  #walk-hud #walk-pause .briefing .briefing-kicker { letter-spacing: 0.22em; }
+  #walk-hud #walk-pause .walk-card[data-page="mission"]::after { top: 22px; bottom: auto; }
 }
-#walk-hud #walk-pause .field-map svg { filter: drop-shadow(0 0 1px #ff2a1f44); }
-#walk-hud #walk-pause .briefing .briefing-kicker { color: var(--k7-red); font: 400 14px/1 var(--k7-display); letter-spacing: 0.3em; text-transform: uppercase; }
-#walk-hud #walk-pause .briefing h2 { font-size: 52px; transform: skewX(-7deg); transform-origin: 100% 100%; margin-right: 0; }
-#walk-hud #walk-pause .briefing h3 {
-  display: inline-block; padding: 4px 10px 3px; background: var(--k7-red); color: var(--k7-black);
-  font: 400 15px/1 var(--k7-display); letter-spacing: 0.18em; transform: skewX(-8deg);
-}
-#walk-hud #walk-pause .briefing .briefing-body { border-top: 3px solid var(--k7-bone); }
-#walk-hud #walk-pause .briefing li strong { font: 400 19px/1.1 var(--k7-display); letter-spacing: 0.03em; text-transform: uppercase; }
+#walk-hud #walk-pause .briefing h3 { color: var(--k7-gray); font: 400 13px/1 var(--k7-display); letter-spacing: 0.32em; }
+#walk-hud #walk-pause .briefing li strong { font: 400 20px/1.1 var(--k7-display); letter-spacing: 0.03em; text-transform: uppercase; }
+#walk-hud #walk-pause .briefing li strong em { color: var(--k7-gray); font-family: var(--k7-body); }
 #walk-hud #walk-pause .briefing .briefing-main li::before { border: 0; background: var(--k7-bone); color: var(--k7-black); font: 400 15px/22px var(--k7-display); }
-#walk-hud #walk-pause .briefing .briefing-side li::before { border-color: var(--k7-red); }
-#walk-hud #walk-pause .briefing li.is-done::before { background: var(--k7-yellow); color: var(--k7-black); }
-#walk-hud #walk-pause .briefing .briefing-intel p { border-left: 3px solid var(--k7-red); color: #cfcac0; }
-#walk-hud #walk-pause .briefing .briefing-actions { background: linear-gradient(180deg, transparent, var(--k7-panel) 38%); }
-#walk-hud #walk-pause .walk-card[data-page="mission"]::after { top: auto; bottom: 120px; }
+#walk-hud #walk-pause .briefing .briefing-side li::before { border-color: var(--k7-gray); }
+#walk-hud #walk-pause .briefing li.is-done::before { background: var(--k7-bone); color: var(--k7-black); }
+#walk-hud #walk-pause .briefing .briefing-intel p { border-left: 2px solid #ffffff33; color: #c4bfb6; }
+#walk-hud #walk-pause .briefing .briefing-intel { border-color: #ffffff2e; }
+#walk-hud #walk-pause .walk-card[data-page="mission"]::after { top: auto; bottom: 34px; right: 16px; color: #ffffff40; text-shadow: none; }
 
 /* The small corner buttons over the world (Main menu, map views): black tabs with a red edge. */
 .mode-button {
@@ -268,11 +270,13 @@ body[data-mission="true"]::before {
   background: radial-gradient(ellipse at 50% 50%, transparent 58%, #00000047 100%);
 }
 
+/* While a mission's opening tints the world red, the HUD sits above it, so the mission list stays black and white. */
+body:has(.mission-intro) #mission-hud { z-index: 6; }
 /* The mission list: a black plate with a grey edge. */
 .mission-objectives { border-left: 5px solid var(--hud-mid); background: var(--hud-plate); color: var(--hud-white); font-family: var(--k7-body); box-shadow: 5px 5px 0 #00000040; }
 .mission-objectives.is-intro { box-shadow: 0 0 0 100vmax #00000088, 8px 8px 0 var(--hud-dark); }
 .objectives-tab { font: 400 14px/1 var(--k7-display); letter-spacing: 0.14em; }
-.mission-objectives kbd { border-color: var(--hud-white); border-radius: 0; color: var(--hud-white); font: 400 11px/1 var(--k7-display); }
+.mission-objectives kbd { border-color: #fff; border-radius: 0; background: #fff; color: #000; font: 400 11px/1 var(--k7-display); }
 .mission-objectives h2, .mission-objectives h3 { font: 400 12px/1 var(--k7-display); letter-spacing: 0.2em; color: var(--hud-mid); }
 .objective-main .objective-text b { font: 400 20px/1.05 var(--k7-display); letter-spacing: 0.03em; text-transform: uppercase; }
 .objective-text em, .objective-text small, .objectives-hint { color: var(--hud-mid); }
@@ -281,9 +285,9 @@ body[data-mission="true"]::before {
 @keyframes objective-blink { 0% { background: var(--hud-white); color: #000; } 50% { background: transparent; color: var(--hud-white); } }
 @keyframes objective-blink-mark { 0% { background: var(--hud-white); } 50% { background: transparent; } }
 
-/* The F prompt: a black tab, the key a light grey block. */
+/* The F prompt: a black tab, the key a white block. */
 #action-prompt { background: var(--hud-plate); border: 2px solid var(--hud-white); border-radius: 0; color: var(--hud-white); box-shadow: 4px 4px 0 var(--hud-dark); }
-#action-prompt kbd { border: 0; border-radius: 0; background: var(--hud-light); color: #000; font: 400 16px/1 var(--k7-display); }
+#action-prompt kbd { border: 0; border-radius: 0; background: #fff; color: #000; font: 400 16px/1 var(--k7-display); }
 #action-prompt strong { font: 400 16px/1 var(--k7-display); letter-spacing: 0.06em; text-transform: uppercase; }
 #action-prompt .action-icon { color: var(--hud-white); }
 

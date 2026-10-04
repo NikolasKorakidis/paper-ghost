@@ -23,43 +23,51 @@ body[data-mission="true"] .walk-controls,
 body[data-mission="true"] #inspect-mode,
 body[data-mission="true"] .walk-heading { display: none; }
 body[data-mission="true"] .walk-card { width: min(440px, 100%); padding: 38px; background: var(--paper); border-radius: 4px 7px 3px 6px; box-shadow: 3px 4px 0 #00000012; }
-body[data-mission="true"] .walk-card[data-page="mission"] { width: min(1040px, 100%); padding: 24px 38px 34px; }
+body[data-mission="true"] .walk-card[data-page="mission"] { width: min(1180px, 100%); padding: 40px 52px 44px; }
 /*
- * The mission briefing (the page before a mission, and the map in one): the field map large on top, then which
- * mission it is, its premise, the objectives and the intel side by side, and the button that starts it.
+ * The mission briefing (the page before a mission, and the map in one). Two lines up top: Back on the left, and on the
+ * right which mission it is, its name and premise. Under a rule, two columns of the same height with room between
+ * them: the field map on the left; the objectives on the right, with Start mission at their foot, level with the map's
+ * bottom edge. Under both, the intel, across the page in columns.
  */
-/* Back on the left, which mission it is on the right, both on the first line. */
-.briefing .briefing-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
-.briefing .briefing-top .menu-back { margin-top: 8px; }
+.briefing .briefing-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 32px; padding-bottom: 28px; border-bottom: 1px solid var(--ink-rule); }
+.briefing .briefing-top .menu-back { margin-top: 4px; }
 .briefing .briefing-head { text-align: right; }
-.briefing .briefing-map .map-legend { font-size: 11px; }
-.briefing .briefing-map { margin-top: 12px; padding: 10px 12px 2px; border: 1px solid var(--ink-rule); border-radius: 3px; background: var(--paper-shade, #f6f6f6); }
+body[data-mission="true"] .walk-card .briefing .briefing-kicker { margin: 0; font-size: 11px; letter-spacing: 0.32em; text-transform: uppercase; color: var(--ink-light); }
+body[data-mission="true"] .walk-card .briefing h2 { margin: 10px 0 0; }
+body[data-mission="true"] .walk-card .briefing .briefing-premise { margin: 10px 0 0 auto; max-width: 46ch; font-size: 14px; line-height: 1.55; color: var(--ink-muted); }
+.briefing .briefing-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(300px, 1fr); gap: 56px; margin-top: 32px; align-items: stretch; }
+.briefing .briefing-map { margin: 0; padding: 18px 18px 10px; border: 1px solid var(--ink-rule); border-radius: 3px; background: var(--paper-shade, #f6f6f6); }
 .briefing .briefing-map .field-map { margin-top: 0; }
-.briefing .briefing-map .field-map svg { max-height: min(36vh, 380px); margin: 0 auto; }
-body[data-mission="true"] .walk-card .briefing .map-legend { margin: 8px 0 6px; justify-content: center; }
-body[data-mission="true"] .walk-card .briefing .briefing-kicker { margin: 0; font-size: 12px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--ink-light); }
-body[data-mission="true"] .walk-card .briefing h2 { margin: 4px 0 0; }
-body[data-mission="true"] .walk-card .briefing .briefing-premise { margin-top: 4px; max-width: 52ch; margin-left: auto; font-size: 14px; line-height: 1.5; color: var(--ink); }
-.briefing .briefing-body { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 30px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--ink-rule); }
-.briefing .briefing-body:not(:has(.briefing-intel)) { grid-template-columns: 1fr; }
-.briefing h3 { margin: 0 0 12px; font-size: 12px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-light); font-weight: 700; }
-.briefing .briefing-side-title { margin-top: 20px; }
-.briefing :is(.briefing-main, .briefing-side) { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; counter-reset: objective; }
-.briefing :is(.briefing-main, .briefing-side) li { position: relative; padding-left: 36px; counter-increment: objective; }
-.briefing .briefing-main li::before { content: counter(objective); position: absolute; left: 0; top: 1px; width: 22px; height: 22px; display: grid; place-items: center; border: 1px solid var(--ink); font-size: 12px; font-weight: 700; }
+.briefing .briefing-map .field-map svg { max-height: min(54vh, 520px); margin: 0 auto; }
+body[data-mission="true"] .walk-card .briefing .map-legend { margin: 12px 0 2px; justify-content: center; gap: 22px; font-size: 11px; color: var(--ink-muted); }
+.briefing .briefing-body { display: flex; flex-direction: column; gap: 28px; }
+.briefing h3 { margin: 0 0 16px; font-size: 11px; letter-spacing: 0.3em; text-transform: uppercase; color: var(--ink-light); font-weight: 700; }
+.briefing .briefing-side-title { margin-top: 26px; }
+.briefing :is(.briefing-main, .briefing-side) { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; counter-reset: objective; }
+.briefing :is(.briefing-main, .briefing-side) li { position: relative; padding-left: 38px; counter-increment: objective; }
+.briefing .briefing-main li::before { content: counter(objective); position: absolute; left: 0; top: 0; width: 22px; height: 22px; display: grid; place-items: center; border: 1px solid var(--ink); font-size: 12px; font-weight: 700; }
 .briefing .briefing-side li::before { content: ''; position: absolute; left: 6px; top: 7px; width: 9px; height: 9px; border: 1px solid var(--ink-muted); transform: rotate(45deg); }
 .briefing li strong { display: block; font-size: 14px; color: var(--ink); }
 .briefing li strong em { font-style: normal; color: var(--ink-muted); font-size: 12px; margin-left: 6px; }
-.briefing li span { display: block; margin-top: 2px; font-size: 12.5px; line-height: 1.5; color: var(--ink-muted); }
+.briefing li span { display: block; margin-top: 3px; font-size: 12.5px; line-height: 1.5; color: var(--ink-muted); }
 .briefing li.is-done strong { text-decoration: line-through; text-decoration-thickness: 1px; color: var(--ink-muted); }
 .briefing li.is-done::before { content: '✓'; }
-body[data-mission="true"] .walk-card .briefing .briefing-intel p { margin: 0 0 12px; padding-left: 14px; border-left: 2px solid var(--ink-rule); font-size: 13px; line-height: 1.65; }
-/* The start button stays in reach while you read: pinned to the bottom of the page as it scrolls. */
-.briefing .briefing-actions { position: sticky; bottom: -34px; z-index: 2; margin: 26px -38px -34px; padding: 18px 38px 30px; justify-content: flex-end; background: linear-gradient(180deg, transparent, var(--paper) 38%); }
-.briefing .briefing-actions .menu-primary { min-width: 260px; }
-@media (max-width: 760px) {
-  .briefing .briefing-body { grid-template-columns: 1fr; gap: 20px; }
-  .briefing .briefing-actions .menu-primary { width: 100%; }
+.briefing .briefing-intel { margin-top: 40px; padding-top: 28px; border-top: 1px solid var(--ink-rule); }
+.briefing .briefing-tips { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px 40px; }
+body[data-mission="true"] .walk-card .briefing .briefing-intel p { margin: 0; padding-left: 16px; border-left: 1px solid var(--ink-rule); font-size: 13px; line-height: 1.65; color: var(--ink-muted); }
+/* Start mission closes the objectives, at the foot of the column. */
+.briefing .briefing-actions { margin: auto 0 0; padding-top: 8px; }
+.briefing .briefing-actions .menu-primary { width: 100%; }
+@media (max-width: 900px) {
+  body[data-mission="true"] .walk-card[data-page="mission"] { padding: 28px 26px 32px; }
+  .briefing .briefing-grid { grid-template-columns: 1fr; gap: 32px; }
+}
+/* On a phone, Back on its own line and the mission's name under it, full width. */
+@media (max-width: 540px) {
+  .briefing .briefing-top { flex-direction: column; align-items: stretch; gap: 18px; padding-bottom: 22px; }
+  .briefing .briefing-head { text-align: left; }
+  body[data-mission="true"] .walk-card .briefing .briefing-premise { margin-left: 0; }
 }
 body[data-mission="true"] .walk-card[data-page="controls"] { width: min(560px, 100%); }
 /* Co-op: the home line names the room; the page hosts, joins and lists teammates in their colours. */

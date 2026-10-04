@@ -154,7 +154,37 @@ export const DETECTION = {
   closeIn: { shotgun: 5, smg: 9, other: 9 },
   /** How far out riflemen take their flanking positions (m from where you were), and how far round to the side (degrees). */
   flank: { distance: [16, 26] as const, angle: 75 },
+  /** The field of view, all of it (degrees): calm, and in a fight (when a soldier is turning his head about). */
+  fov: 120, fovCombat: 140,
+  /**
+   * How fast the ? fills by where you are in his view (after Hitman and Metal Gear): full speed within `full` degrees
+   * of straight ahead and within `near` metres; at the edge of his view `edge` as fast, at the end of his sight
+   * `far` as fast.
+   */
+  peripheral: { full: 30, edge: 0.55 }, distance: { near: 22, far: 0.5 },
+  /**
+   * Caution (after Metal Gear's caution phase): after a body, a gunshot, losing you or running feet, a guard stays
+   * jumpy for this many seconds, and his ? fills `rate` times as fast.
+   */
+  caution: { body: 90, gunshot: 60, lost: 60, footsteps: 20, rate: 1.5 },
+  /** How far off a body on the ground is seen (m): far further than a person standing still in the shadows. */
+  bodySight: 25,
+  /**
+   * Searches, by what started them: how far out the places he checks are (m from the centre), how many, and how long
+   * the whole search may take (s). Hiding places (out of his view) first; a lost contact first where you were heading.
+   */
+  search: {
+    noise: { reach: [2.5, 6] as const, points: 3, time: 11 },
+    lost: { reach: [3, 9] as const, points: 4, time: 16 },
+    body: { reach: [4, 14] as const, points: 5, time: 26 },
+  },
 } as const
+
+/**
+ * How far an unsilenced gunshot carries to the guards (m), in the open; through walls `muffled` as far. The suppressed
+ * pistol is never heard (see EnemyDirector.hear). Guards hear each other's gunfire too, and come to help.
+ */
+export const GUNSHOT_HEARING = { pistol: 60, ak: 75, smg: 70, shotgun: 75, sniper: 90, muffled: 0.55 } as const
 
 export const ENEMY_COMBAT = {
   passiveRange: 20,

@@ -2,14 +2,14 @@ import * as THREE from 'three'
 import { Draft, type Point } from '../render/ink'
 import { neonSign } from '../render/neon-sign'
 import { interiorRoomOutline, WALL_THICKNESS, wallOutline, type BuildingSpec } from './architecture'
-import { createDoor } from './doors'
+import { createDoor, doorOpenness } from './doors'
 import { cageLamp, darkRoom, daylightOpening, doorwayLight, LAMP_AMBER, screenLight, windowRow } from './lights'
 import { pipe, pipeLadder } from './ladders'
 
-interface Opening { center: number; width: number; bottom: number; height: number; window?: boolean }
+export interface Opening { center: number; width: number; bottom: number; height: number; window?: boolean }
 
 /** A segmented wall: doorways and windows are holes, never panels over a solid box. */
-function wall(name: string, length: number, height: number, x: number, z: number,
+export function wall(name: string, length: number, height: number, x: number, z: number,
   floor: number, angle = 0, openings: Opening[] = [], cutaway = false) {
   const g = new Draft(name, x, z, angle)
   g.userData.cutaway = cutaway
@@ -121,6 +121,9 @@ function surveillanceScreen() {
   return material
 }
 
+/** A monitor that is switched off: near-black glass. */
+const SCREEN_OFF = Object.assign(new THREE.MeshBasicMaterial({ color: 0x141414, side: THREE.DoubleSide }), { defines: { NEON_SHINE: '0.6', NEON_GLOSS: '60.0' } })
+
 function workstation(index: number, x: number, z: number, floor: number) {
   const station = new THREE.Group()
   station.name = `Signals office · workstation ${index}`
@@ -142,8 +145,8 @@ function workstation(index: number, x: number, z: number, floor: number) {
   monitor.box(0.3, 0.035, 0.22, 0, floor + 0.89, -0.22, 'concrete', 'detail')
   monitor.box(0.055, 0.2, 0.06, 0, floor + 1, -0.22, 'paper', 'detail')
   monitor.box(0.94, 0.57, 0.075, 0, floor + 1.33, -0.25, 'paper', 'detail')
-  monitor.box(0.84, 0.46, 0.008, 0, floor + 1.33, -0.207, 'glass', 'detail')
   if (index === 1) {
+    monitor.box(0.84, 0.46, 0.008, 0, floor + 1.33, -0.207, 'glass', 'detail')
     const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.82, 0.44), surveillanceScreen())
     screen.name = 'Signals office · powered surveillance screen'
     screen.position.set(0, floor + 1.33, -0.201)
@@ -155,7 +158,12 @@ function workstation(index: number, x: number, z: number, floor: number) {
     monitor.userData.cameraTerminal = true
     monitor.userData.interactionPoint = [0, floor + 1.33, -0.18]
   } else {
-    monitor.line([[-0.34, floor + 1.44, -0.2], [-0.18, floor + 1.44, -0.2], [-0.18, floor + 1.25, -0.2], [0.3, floor + 1.25, -0.2]], 'landscape')
+    // The other monitor is switched off: a black screen, with only a faint sheen of whatever light is on it.
+    const off = new THREE.Mesh(new THREE.PlaneGeometry(0.84, 0.46), SCREEN_OFF)
+    off.name = 'Signals office · switched-off screen'
+    off.position.set(0, floor + 1.33, -0.206)
+    off.userData.noCollision = true
+    monitor.add(off)
   }
   const desktop = new Draft(`Signals office · desktop computer ${index}`)
   desktop.userData.kind = 'desktop-computer'
@@ -375,14 +383,20 @@ export function messHall(spec: BuildingSpec): THREE.Group {
   headhouse.userData = { kind: 'roof-entry', cutaway: true, doorLandingDepth: 1.92 }
   const hutMinX = 7.56, hutMaxX = 10.84, hutMinZ = -2.4, hutMaxZ = 4.55, hutH = 2.75
   const hutX = (hutMinX + hutMaxX) / 2, hutZ = (hutMinZ + hutMaxZ) / 2
+  const roofDoor = createDoor({ name: 'Rooftop access door', x: hutX, z: hutMaxZ, floor: roofY, width: 1.5, height: 2.4, exit: true })
   headhouse.add(
     wall('Rooftop stair enclosure · west wall', hutMaxZ - hutMinZ, hutH, hutMinX, hutZ, roofY, Math.PI / 2),
     wall('Rooftop stair enclosure · east wall', hutMaxZ - hutMinZ, hutH, hutMaxX, hutZ, roofY, Math.PI / 2),
     wall('Rooftop stair enclosure · north wall', hutMaxX - hutMinX, hutH, hutX, hutMinZ, roofY),
     wall('Rooftop stair enclosure · doorway', hutMaxX - hutMinX, hutH, hutX, hutMaxZ, roofY, 0,
       [{ center: 0, width: 1.5, bottom: 0, height: 2.4 }]),
-    createDoor({ name: 'Rooftop access door', x: hutX, z: hutMaxZ, floor: roofY, width: 1.5, height: 2.4, exit: true }),
+    roofDoor,
   )
+  // The hut is a dark room of its own: with its door shut, the only light in it is the green EXIT sign over the door.
+  // Daylight comes in through the door as far as it is open.
+  headhouse.add(darkRoom('Rooftop stair enclosure', [hutX, roofY + (hutH - 0.15) / 2, hutZ],
+    [(hutMaxX - hutMinX) / 2 + 0.02, (hutH + 0.15) / 2, (hutMaxZ - hutMinZ) / 2 + 0.02], { ambient: 0.025 }))
+  doorwayLight(roofDoor, -1, { intensity: 5, range: 9, bounce: 0.12 })
   const hutRoof = new Draft('Rooftop stair enclosure · cap')
   hutRoof.box(hutMaxX - hutMinX + 0.25, 0.18, hutMaxZ - hutMinZ + 0.25, hutX, roofY + hutH + 0.09, hutZ, 'roof')
   hutRoof.hatch([hutMinX + 0.05, roofY + hutH + 0.196, hutMinZ + 0.15], [1.15, 0, 0], [0, 0, 1.8],
@@ -409,17 +423,25 @@ export function messHall(spec: BuildingSpec): THREE.Group {
   // sunbeams through each wall's windows, daylight down the stairwell from the roof and through the yard door
   // while it is open, and caged lamps on long cords from the high ceiling. The office is its own darker room.
   const top = roofY - 0.15
+  // Daylight down the stairwell comes from the rooftop door, so it is only there while that door is open.
+  const stairwellDaylight = daylightOpening('Mess hall · stairwell', [(hole.minX + hole.maxX) / 2, top, (hole.minZ + hole.maxZ) / 2], [0, -1, 0], [0, 0, 1],
+    hole.maxZ - hole.minZ, { intensity: 2.5, range: 10 })
+  stairwellDaylight.userData.neonLight.dimmer = () => doorOpenness(roofDoor)
   g.add(darkRoom('Mess hall', [0, (floor - 0.3 + top) / 2, 0], [halfW + 0.02, (top - floor + 0.3) / 2, halfD + 0.02], { ambient: 0.035 }))
   const paneY = floor + 1.4 + 1.45 / 2
   g.add(
     windowRow('Mess hall · south windows', [0, paneY, halfD], Math.PI, [-10.2, -5.2, 4.8, 10.2].map(x => -x), 1.7, 1.45),
-    windowRow('Mess hall · north windows', [0, paneY, -halfD], 0, [-10.2, -3.6, 3.5, 10.2], 1.7, 1.45),
+    // A window light must not run through a wall: the north-east window is in the stair annex, and the camera room
+    // sits between the two west windows, so those walls' windows are lit as separate rows.
+    windowRow('Mess hall · north windows', [0, paneY, -halfD], 0, [-10.2, -3.6, 3.5], 1.7, 1.45),
+    windowRow('Mess hall · stair annex north window', [0, paneY, -halfD], 0, [10.2], 1.7, 1.45),
     // The end walls are turned a quarter round, so their openings' positions run toward -z: the west light (also
     // turned that way) takes them as they are, the east light (turned the other way) reversed.
-    windowRow('Mess hall · west windows', [-halfW, paneY, 0], Math.PI / 2, [-7.4, 6.8], 1.7, 1.45),
-    windowRow('Mess hall · east windows', [halfW, paneY, 0], -Math.PI / 2, [-7.4, 2.4].map(z => -z), 1.7, 1.45),
-    daylightOpening('Mess hall · stairwell', [(hole.minX + hole.maxX) / 2, top, (hole.minZ + hole.maxZ) / 2], [0, -1, 0], [0, 0, 1],
-      hole.maxZ - hole.minZ, { intensity: 2.5, range: 10 }),
+    windowRow('Mess hall · west window north of the camera room', [-halfW, paneY, 0], Math.PI / 2, [-7.4], 1.7, 1.45),
+    windowRow('Mess hall · west window south of the camera room', [-halfW, paneY, 0], Math.PI / 2, [6.8], 1.7, 1.45),
+    windowRow('Mess hall · east window', [halfW, paneY, 0], -Math.PI / 2, [7.4], 1.7, 1.45),
+    windowRow('Mess hall · stair annex east window', [halfW, paneY, 0], -Math.PI / 2, [-2.4], 1.7, 1.45),
+    stairwellDaylight,
   )
   doorwayLight(yardExit, -1, { bounce: 0.12 })
   const bulb = eave - 1.7

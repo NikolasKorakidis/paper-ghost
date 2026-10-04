@@ -1,4 +1,7 @@
 import * as THREE from 'three'
+import { lightBurst, type BurstOptions } from '../render/neon'
+import { Lamps } from './lamps'
+import { AlarmBeacons } from './beacons'
 import { BulletTrails, bulletNearMiss } from './bullet-trails'
 import { GRENADE_RULES, HOSTAGE, KNIFE, MOVE_SPEED, fragDamage, aimToggles, canSprint, PLAYER_BULLET_DAMAGE, PLAYER_HEALTH, SPRINT_FOOTSTEP_RADIUS, fallDamage } from './balance'
 import type { EnvironmentCamera } from '../camera'
@@ -52,6 +55,10 @@ const PENDING_LOAD = 'stickman-load-level'
 
 type Checkpoint = { mission: MissionState; weapons: WeaponSnapshot; enemies: EnemySnapshot[]; doors: (number | boolean)[]; position: Vec3; quaternion: [number,number,number,number]; blood?: BloodSnapshot; grenades?: GrenadeSnapshot }
 
+/** A gun's muzzle flash as light: warm, close, gone in a blink, without shadows (see lightBurst). */
+const MUZZLE_FLASH: BurstOptions = { color: 0xffc77a, intensity: 16, range: 6.5, life: 0.07, hold: 0.02 }
+const MUZZLE_SILENCED: BurstOptions = { color: 0xffd9a0, intensity: 3, range: 2.5, life: 0.05, hold: 0.01 }
+
 export class MissionRuntime {
   state: MissionState
   readonly weapons: FirstPersonWeapons
@@ -67,6 +74,10 @@ export class MissionRuntime {
   private introPending = true
   private wasPlaying = false
   readonly radios: QuestRadios
+  /** Ceiling lamps a bullet can break (MissionState.lampsOut). */
+  readonly lamps: Lamps
+  /** Red rotating lights on the roofs round the alarm, sweeping while it sounds. */
+  readonly beacons: AlarmBeacons
   /** The tutorial level's coach, damage numbers and boss bar; null in the mission. */
   readonly tutorial: TutorialMode | null
   readonly bulletTrails: BulletTrails
@@ -155,6 +166,9 @@ export class MissionRuntime {
     this.impacts = new MissionImpacts(scene, player.world)
     this.crates = new QuestCrates(scene, event => this.audio.play(event))
     this.radios = new QuestRadios(scene, event => this.audio.play(event))
+    const alarm = world.stations.find(station => station.kind === 'alarm')
+    this.beacons = new AlarmBeacons(scene, alarm?.point ?? null)
+    this.lamps = new Lamps(scene, point => { const floor = player.world.floor(point, 0.5, 8); return Number.isFinite(floor) ? floor : point.y - 2.5 })
     this.bulletTrails = new BulletTrails(scene, 'Player bullet')
     this.escapeDust = new EscapeDust(scene)
     player.lookSensitivity = () => this.weapons.lookSensitivity
@@ -279,6 +293,7 @@ export class MissionRuntime {
     this.security = new SecuritySystem(player.world, world, this.ai, event => this.emit(event, false))
     this.syncWorld()
     player.actions.extraTargets = () => this.targets()
+    player.actions.onIdleUse = () => { if (this.isActive() && !this.grenades.equipped && !this.aiming) this.weapons.inspect() }
     player.actions.onAction = target => {
       this.weapons.cancel(); this.aiming = false; this.interactionTime = 0.25
       if (target.kind === 'door' || target.kind === 'ladder') this.emit({ kind: target.kind, position: target.point, radius: target.kind === 'door' ? 8 : 5 }, true)
@@ -533,6 +548,8 @@ export class MissionRuntime {
     if (!audible && this.role === 'host' && event.kind !== 'enemy-bullet-whiz') this.coop.send({ t: 'sound', e: netSound(event) })
     if (this.death.active) return
     if ((event.kind.startsWith('shot-') || event.kind.startsWith('enemy-shot')) && event.position) {
+      // The muzzle flash lights the room for a blink: walls, floor, the shooter's hands. A silencer hides most of it.
+      lightBurst(event.position, event.kind.endsWith('silenced') ? MUZZLE_SILENCED : MUZZLE_FLASH)
       if (this.state.hostages.some(h => h.status === 'following' && event.position!.distanceTo(new THREE.Vector3(...h.position)) < 15)) this.gunfireUntil = this.state.elapsed + 1.1
     }
     const eye = this.camera.perspective.position
@@ -590,6 +607,14 @@ export class MissionRuntime {
     if (crate) {
       if (this.role === 'guest') this.coop.send({ t: 'crate', id: this.coop.hub.selfId, crate, damage: shot.damage })
       else this.hitCrate(crate, shot.damage)
+    }
+    // A bullet that passes a lit ceiling lamp breaks it, and its room goes darker. (The host's lamps are shared.)
+    const lamp = this.role === 'guest' ? null : this.lamps?.hit(shot.origin, shot.direction, distance)
+    if (lamp) {
+      this.state.lampsOut = [...this.state.lampsOut ?? [], lamp.id]
+      this.lamps.smash(lamp.id)
+      this.lamps.apply(this.state.lampsOut)
+      this.emit({ kind: 'impact', position: shot.origin.clone().addScaledVector(shot.direction, lamp.distance), radius: 9 }, true)
     }
     // One bullet wrecks a radio, switched off or not.
     const radio = !hit && !hostageHit && !crate && surface ? this.radios.at(surface.mesh) : null
@@ -719,6 +744,8 @@ export class MissionRuntime {
     this.crates.update(dt)
     this.radios.sync(this.state)
     this.radios.update(dt)
+    this.lamps?.update(dt)
+    this.beacons?.update(this.isActive() && this.state.alarm === 'active', performance.now() / 1000)
   }
 
   /**
@@ -950,6 +977,7 @@ export class MissionRuntime {
   }
 
   private syncWorld(resetEscort = false) {
+    this.lamps?.apply(this.state.lampsOut)
     const rescue = this.world.rescue
     if (rescue) {
       setDoorOpen(rescue.gate, this.state.gateOpen)
@@ -1324,7 +1352,7 @@ export class MissionRuntime {
   /** Guest: adopt the host's compound. Doors this player just used keep their state briefly. */
   private applyWorld(message: Extract<CoopMessage, { t: 'world' }>) {
     if (this.escape.active) return
-    const shape = () => JSON.stringify([this.state.gateOpen, this.state.camerasOff, this.state.alarm, this.state.hostages.map(hostage => hostage.status)])
+    const shape = () => JSON.stringify([this.state.gateOpen, this.state.camerasOff, this.state.alarm, this.state.hostages.map(hostage => hostage.status), this.state.lampsOut])
     const before = shape(), wasEscaping = this.state.jeep === 'escaping'
     applySharedMission(this.state, message.mission)
     this.hostEnemies = message.enemies; this.hostCower = message.cower
@@ -1407,7 +1435,7 @@ export class MissionRuntime {
   }
 
   finishFrame() { this.playerHits.removeCamera(); this.lean.remove() }
-  dispose() { this.tutorial?.dispose();this.grenades.dispose();this.coopPanel.dispose();this.coop.dispose();this.teammates.dispose();this.escape.reset(this.camera.perspective);this.escapeDust.dispose();this.playerHits.clear();this.disposed=true;this.abort.abort();this.bulletTrails.dispose();this.escort?.dispose();this.captives?.dispose();this.bossTags?.dispose();this.statusTags?.dispose();this.charges?.dispose();this.weapons.dispose();this.ai.dispose();this.blood.dispose();this.impacts.dispose();this.crates.dispose();this.intro.clear();this.radios.dispose();this.audio.dispose();this.hud.dispose();this.player.movementLocked=false;this.player.onPlayingChange=()=>{};this.player.lookSensitivity=()=>1;this.player.speedScale=()=>1;this.player.actions.extraTargets=()=>[];this.player.actions.onAction=()=>{} }
+  dispose() { this.tutorial?.dispose();this.grenades.dispose();this.coopPanel.dispose();this.coop.dispose();this.teammates.dispose();this.escape.reset(this.camera.perspective);this.escapeDust.dispose();this.playerHits.clear();this.disposed=true;this.abort.abort();this.bulletTrails.dispose();this.escort?.dispose();this.captives?.dispose();this.bossTags?.dispose();this.statusTags?.dispose();this.charges?.dispose();this.weapons.dispose();this.ai.dispose();this.blood.dispose();this.impacts.dispose();this.crates.dispose();this.lamps.dispose();this.beacons.dispose();this.intro.clear();this.radios.dispose();this.audio.dispose();this.hud.dispose();this.player.movementLocked=false;this.player.onPlayingChange=()=>{};this.player.lookSensitivity=()=>1;this.player.speedScale=()=>1;this.player.actions.extraTargets=()=>[];this.player.actions.onAction=()=>{} }
 }
 
 const netSound = (event: SoundEvent): NetSound => ({ kind: event.kind, position: event.position?.toArray() as Vec3 | undefined, radius: event.radius, text: event.text,

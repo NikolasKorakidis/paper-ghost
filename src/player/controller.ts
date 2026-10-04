@@ -212,7 +212,8 @@ export class FirstPersonController {
       const stance: Stance = event.code === 'KeyC' ? 'crouch' : 'prone'
       this.chosenStance = this.chosenStance === stance ? 'stand' : stance
     }
-    if (event.code === 'KeyF' && !event.repeat) { event.preventDefault(); this.actions.activate(this.camera.active) }
+    // F uses what is in front of you; with nothing there, it looks the weapon over.
+    if (event.code === 'KeyF' && !event.repeat) { event.preventDefault(); if (!this.actions.activate(this.camera.active)) this.actions.onIdleUse?.() }
     if (event.code === 'KeyR' && !event.repeat && !this.missionMode) { event.preventDefault(); this.respawn() }
     this.invalidate()
   }

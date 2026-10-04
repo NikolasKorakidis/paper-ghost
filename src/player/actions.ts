@@ -14,6 +14,8 @@ export type ActionTarget = {
 }
 
 export class PlayerActions {
+  /** Called when F is pressed with nothing in reach to use (the game inspects the weapon). */
+  onIdleUse?: () => void
   readonly doors: THREE.Group[] = []
   readonly ladders: THREE.Object3D[] = []
   readonly ziplines: THREE.Object3D[] = []

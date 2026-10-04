@@ -180,7 +180,8 @@ await check('Live director spots, is sure after the notice time, and obeys last-
   advance(1.8)
   assert.equal(director.enemies[0].state, 'investigate')
   assert(director.enemies[0].lastKnown!.z > 0, 'lost guard may only pursue observed contact')
-  advance(20)
+  // He walks to where he lost you, then searches round it (DETECTION.search.lost), and gives up after that.
+  advance(30)
   assert(['guard', 'patrol'].includes(director.enemies[0].state), 'search must expire')
   director.restore(saved)
   assert.deepEqual(director.snapshot(), saved, 'checkpoint restores meaningful clocks, PRNG and routes')

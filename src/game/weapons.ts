@@ -4,7 +4,7 @@ import { disposeGun, type Gun } from '../lab/weapons/models'
 import { buildKnifeHand, KNIFE_HAND } from './knife-hand'
 import { offsetDirection } from './aim'
 import type { WeaponContext, WeaponFrame, WeaponItem, WeaponName, WeaponSnapshot } from './types'
-import { AIM_ZOOM, AMMO, KNIFE, SILENCED_REPORT_RADIUS, STARTING_SLOT, WEAPON_RULES, WEAPON_SLOT, WEAPON_SLOTS, SHOTGUN_PELLETS, SHOTGUN_BALLISTICS, SNIPER_ZOOM, startingLoadout, type KnifeAttack } from './balance'
+import { AIM_ZOOM, AMMO, GUNSHOT_HEARING, KNIFE, SILENCED_REPORT_RADIUS, STARTING_SLOT, WEAPON_RULES, WEAPON_SLOT, WEAPON_SLOTS, SHOTGUN_PELLETS, SHOTGUN_BALLISTICS, SNIPER_ZOOM, startingLoadout, type KnifeAttack } from './balance'
 import { createMissionGun } from './weapon-models'
 export { WEAPON_RULES } from './balance'
 
@@ -53,6 +53,30 @@ const knifePosition = new THREE.Vector3()
 const knifeTurn = new THREE.Quaternion()
 /** Held in the firing hand alone; the support hand only appears to reload. */
 const ONE_HANDED = new Set<WeaponName>(['pistol', 'silenced', 'knife'])
+/**
+ * Inspecting the weapon (F with nothing to use), after Counter-Strike: it is brought in towards the middle, turned to
+ * show its flank and rolled to show its top, held there while it turns a little, then rolled right over to show its
+ * underside and the magazine, held, and lowered back into the hold. Keys are [seconds, x, y, z (metres, in the camera's frame), pitch, yaw, roll
+ * (radians, about the grip)], eased between.
+ */
+type InspectKey = [number, number, number, number, number, number, number]
+const INSPECT_GUN: InspectKey[] = [
+  [0, 0, 0, 0, 0, 0, 0],
+  [0.45, -0.1, 0.06, -0.05, 0.08, 0.42, 0.5],
+  [1.25, -0.105, 0.065, -0.05, 0.12, 0.5, 0.58],
+  [1.75, -0.1, 0.05, -0.1, -0.18, 0.5, -0.7],
+  [2.45, -0.1, 0.055, -0.1, -0.22, 0.56, -0.8],
+  [3, 0, 0, 0, 0, 0, 0],
+]
+/** The knife: the blade's face turned to you, a spin round the finger, its back, and away. */
+const INSPECT_KNIFE: InspectKey[] = [
+  [0, 0, 0, 0, 0, 0, 0],
+  [0.4, -0.08, 0.06, 0.06, 0.2, -0.9, 0.3],
+  [1.1, -0.085, 0.065, 0.06, 0.25, -1.05, 0.35],
+  [1.5, -0.06, 0.08, 0.05, -0.15, 0.9, -0.3],
+  [2.2, -0.06, 0.08, 0.05, -0.2, 1.05, -0.35],
+  [2.7, 0, 0, 0, 0, 0, 0],
+]
 type LooseWeapon = { item: WeaponItem; model: Gun }
 type Arm = { shoulder: THREE.Vector3; pole: THREE.Vector3; upper: THREE.Mesh; fore: THREE.Mesh; elbow: THREE.Mesh }
 
@@ -113,6 +137,8 @@ export class FirstPersonWeapons {
   private baseFov: number | null = null
   private zoom = 1
   private pendingStab = false
+  /** Seconds into an inspection, or null when not inspecting. */
+  private inspecting: number | null = null
   private swing: { kind: KnifeAttack; elapsed: number; struck: boolean } | null = null
   private feet = new THREE.Vector3()
   private frame: WeaponFrame = { active: false, climbing: false, moving: 0, aiming: false, reducedMotion: false, feet: this.feet }
@@ -141,6 +167,18 @@ export class FirstPersonWeapons {
   get label() { return this.current ? WEAPON_RULES[this.current.name].label : 'Empty hands' }
   get ammo() { return this.current && this.current.name !== 'knife' ? `${this.current.magazine} / ${this.current.reserve}` : '—' }
   get reloading() { return this.reloadElapsed !== null }
+  get inspectingWeapon() { return this.inspecting !== null }
+
+  /** Look the weapon over (F with nothing to use), as in Counter-Strike. Pressing again starts it over. Anything the
+   * weapon does (firing, aiming, reloading, switching) puts it straight back in the hold. */
+  inspect() {
+    if (!this.enabled || !this.current || this.reloading || this.switchTime > 0 || this.swing || this.scopeActive || this.aim > 0.05) return false
+    this.inspecting = 0
+    // The knife spins round the finger halfway through.
+    if (this.current.name === 'knife' && !this.reducedMotion) this.trick = null
+    this.context.emit({ kind: 'inspect', weapon: this.current.name, position: this.feet.clone(), radius: 1 })
+    return true
+  }
   get blocked() { return this.obstructed }
   get selected() { return this.slot }
   get scoped() { return this.scopeActive }
@@ -260,6 +298,7 @@ export class FirstPersonWeapons {
 
   trigger(pressed: boolean) {
     if (!pressed) { this.held = false; return }
+    this.inspecting = null
     if (this.enabled && this.reloading && this.current?.name === 'shotgun' && this.current.magazine > 0) this.cancel()
     if (!this.enabled || this.reloading || this.switchTime > 0 || !this.current) return
     if (!this.held) this.pendingShot = true
@@ -271,6 +310,7 @@ export class FirstPersonWeapons {
     if (!this.enabled || !item || this.reloading || this.switchTime > 0 || item.reserve <= 0 || item.magazine >= WEAPON_RULES[item.name].capacity) return false
     this.held = false
     this.pendingShot = false
+    this.inspecting = null
     this.reloadAim = this.aim
     // Negative time lowers from the current pose; magazine/bolt motion starts at zero.
     this.reloadElapsed = this.aim > 0.001 ? -AIM_LOWER_TIME : 0
@@ -312,6 +352,7 @@ export class FirstPersonWeapons {
     this.pendingStab = false
     this.swing = null
     this.trick = null
+    this.inspecting = null
     this.reloadElapsed = null
     this.reloadAim = 0
     this.switchTime = 0
@@ -397,6 +438,13 @@ export class FirstPersonWeapons {
     if (this.current?.name === 'shotgun' && previousCooldown > 0.72 && this.cooldown <= 0.72) this.context.emit({ kind: 'weapon-pump', position: this.feet.clone(), radius: 3 })
     this.switchTime = Math.max(0, this.switchTime - delta)
     if (this.trick && (this.trick.elapsed += delta) >= KNIFE_TRICKS[this.trick.kind]) this.trick = null
+    if (this.inspecting !== null) {
+      const keys = this.current?.name === 'knife' ? INSPECT_KNIFE : INSPECT_GUN, previous = this.inspecting
+      this.inspecting += delta
+      // The knife's spin round the finger, as it turns from one side to the other.
+      if (this.current?.name === 'knife' && !frame.reducedMotion && previous < 1.15 && this.inspecting >= 1.15) this.trick = { kind: 'spin', elapsed: 0 }
+      if (frame.aiming || this.inspecting >= keys[keys.length - 1][0]) this.inspecting = null
+    }
     this.recoil = Math.max(0, this.recoil - delta * 7)
     this.flashTime = Math.max(0, this.flashTime - delta)
     this.reducedMotion = frame.reducedMotion
@@ -510,6 +558,7 @@ export class FirstPersonWeapons {
     this.mount.rotation.set(AIM_PITCH * this.aim + (motion ? this.recoil * 0.035 : 0) + this.lower * 0.5,
       Math.PI + working * 0.18, -working * 0.23, 'YXZ')
     if (this.current.name === 'knife') this.knifePose()
+    if (this.inspecting !== null) this.inspectPose(this.inspecting, motion)
     const hit = motion ? this.frame.hitPose : undefined
     if (hit) {
       this.mount.position.add(hit.weaponPosition)
@@ -588,6 +637,19 @@ export class FirstPersonWeapons {
       this.cuff.position.copy(reachableWrist).addScaledVector(along, KNIFE_HAND.cuff.length * 0.35)
       this.cuff.quaternion.setFromUnitVectors(up, along)
     }
+  }
+
+  /** The inspection's offset from the hold at `time`, eased key to key. Reduced Motion lifts it into view, no turning. */
+  private inspectPose(time: number, motion: boolean) {
+    const keys = this.current?.name === 'knife' ? INSPECT_KNIFE : INSPECT_GUN
+    let i = 0
+    while (i < keys.length - 2 && time > keys[i + 1][0]) i++
+    const [t0, ...a] = keys[i], [t1, ...b] = keys[i + 1]
+    const u = smooth(time, t0, t1)
+    const at = (k: number) => THREE.MathUtils.lerp(a[k], b[k], u)
+    this.mount.position.x += at(0); this.mount.position.y += at(1); this.mount.position.z += at(2)
+    if (!motion) return
+    this.mount.rotateY(at(4)); this.mount.rotateX(at(3)); this.mount.rotateZ(at(5))
   }
 
   /** The knife swaps the gun orientation for KNIFE_KEYS, blending key to key through a swing, then adds any draw trick. */
@@ -694,7 +756,7 @@ export class FirstPersonWeapons {
     this.nudge(pitch, yaw)
     this.settle.pitch += pitch * rules.settle; this.settle.yaw += yaw * 0.35
     this.context.emit({ kind: `shot-${item.name}`, position: origin.clone(),
-      radius: item.name === 'silenced' ? SILENCED_REPORT_RADIUS : item.name === 'pistol' ? 38 : 55, text: `${rules.label} fired` })
+      radius: item.name === 'silenced' ? SILENCED_REPORT_RADIUS : GUNSHOT_HEARING[item.name as keyof typeof GUNSHOT_HEARING] ?? GUNSHOT_HEARING.ak, text: `${rules.label} fired` })
     this.pose(0)
   }
 

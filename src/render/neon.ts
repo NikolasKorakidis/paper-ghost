@@ -40,7 +40,7 @@ export const NEON_MAX = 10
 export const NEON_FAR = 16
 const FAR_LIMIT = 220
 /** Dark rooms that can be in effect at once. */
-export const NEON_DARK_MAX = 4
+export const NEON_DARK_MAX = 5
 const SHADOW_SIZE = 256
 /**
  * A light near the player re-renders its shadows at most this often (s), one light per frame, and only when
@@ -62,6 +62,21 @@ const NEW_FACES_PER_FRAME = 2
 const CASTER_INTERVAL = 1
 /** Signs further than this from the player are not lit at all (m). */
 const VIEW_LIMIT = 90
+/**
+ * Choosing which lights get the shadowed slots. A light keeps its slot until another is clearly more important (by
+ * HOLD metres of priority), so lights at the edge of the choice do not swap back and forth as you walk, losing and
+ * redrawing their shadows and fading up again each time. Lights in a room other than the one you are in (or indoor
+ * lights while you are outdoors) are seen only through doors and windows, so they count as ELSEWHERE metres further.
+ */
+const HOLD = 2
+const ELSEWHERE = 6
+/** A dark room in effect stays in effect until another is this much nearer (m), so interiors do not pop to daylight. */
+const ROOM_HOLD = 1.5
+/** A light this far from the player (m) redraws its shadows for movement less often, SLOW_SHADOW_INTERVAL (s). */
+const NEAR_SHADOWS = 7
+const SLOW_SHADOW_INTERVAL = 0.25
+/** The whole scene is searched for new shadow casters this often (s); a change of lights only re-sorts the last search. */
+const CANDIDATE_INTERVAL = 3
 
 export type NeonLightSpec = {
   /** Tube line ends in the sign's local space. The light shines toward the sign's local +Z. */
@@ -79,11 +94,65 @@ export type NeonLightSpec = {
   /** Light bounced around the room, as a fraction of the direct light (default 0.06). */
   bounce?: number
   /**
+   * How big the glowing thing is across its line (m): a tube a few centimetres, a window half its height, a doorway
+   * half its width. Light right beside it is capped by its size, as a real lamp or window is, instead of growing
+   * without limit as a point would; without it, anything touching the line (a shelf between two windows, the wall at
+   * a corner) gets a hot spot. Default 0.05.
+   */
+  radius?: number
+  /**
+   * Where its shadows are seen from, in the sign's local space (default: the middle of the line). Put it in open
+   * space in the room the light shines into: a window's is in front of a pane, not inside the shelf between two.
+   */
+  shadowFrom?: THREE.Vector3Tuple
+  /**
    * The light comes through a row of up to four equal windows along the light's line, each `width` × `height`,
    * centred `offsets` metres along the line from its middle (and on its height). `sun` is how strong the
-   * sunbeams through them are.
+   * sunbeams through them are. A window row gives its light only through the panes, not along the wall between.
    */
   window?: { width: number; height: number; offsets: number[]; sun: number }
+  /**
+   * A burst (a flashbang): it comes on at full strength at once, with all its shadows drawn that frame (so it never
+   * shines through a wall), and it takes a slot before any other light.
+   */
+  instant?: boolean
+  /**
+   * Shines without shadows (a muzzle flash, too brief and too frequent to draw shadows for): it never takes a
+   * shadowed slot, and comes first among the distant lights, which keep to their own rooms, so it still never shines
+   * through a wall into the next room.
+   */
+  shadowless?: boolean
+}
+
+/**
+ * Lights that come and go during play (a flashbang's burst). Add the object to the scene and to this set, and take it
+ * out of both when it is done: every NeonLights picks the change up on its next update.
+ */
+export const transientLights = new Set<THREE.Object3D>()
+
+/** A burst of light: its colour, brightness and reach, how long it lasts, and whether it casts shadows. */
+export type BurstOptions = { color: number; intensity: number; range: number; life: number; shadows?: boolean; hold?: number; radius?: number }
+
+/**
+ * A light that flares and dies away by itself: a muzzle flash, an explosion. Full for \`hold\` seconds, then falling
+ * away to nothing by the end of its \`life\`. It needs nothing from the caller after this: every NeonLights lights the
+ * world with it while it lasts, and lets it go after.
+ */
+export function lightBurst(position: THREE.Vector3, options: BurstOptions, now = performance.now() / 1000) {
+  const light = new THREE.Object3D()
+  light.name = 'Burst of light'
+  light.position.copy(position)
+  // Pointing down with its cut-off plane well above: it lights every way but up through a floor.
+  light.rotation.x = Math.PI / 2
+  light.updateMatrixWorld()
+  const { life, hold = Math.min(0.04, life * 0.3) } = options
+  const burst = { born: now, life, age: 0 }
+  light.userData.burst = burst
+  light.userData.neonLight = { start: [-0.03, 0, 0], end: [0.03, 0, 0], color: options.color, intensity: options.intensity, range: options.range,
+    standoff: Math.max(3, options.range * 0.4), radius: options.radius ?? 0.12, bounce: 0.18, instant: true, shadowless: !options.shadows,
+    dimmer: () => burst.age < hold ? 1 : Math.exp(-(burst.age - hold) * 6 / Math.max(life - hold, 1e-3)) * (1 - THREE.MathUtils.smoothstep(burst.age, life * 0.8, life)) } satisfies NeonLightSpec
+  transientLights.add(light)
+  return light
 }
 
 /** Where the sun is (a direction toward it) and its warm colour. Low in the south-west: long afternoon beams. */
@@ -109,6 +178,8 @@ export const neonUniforms = {
   neonEnd: { value: new Float32Array(NEON_MAX * 3) },
   neonFacing: { value: new Float32Array(NEON_MAX * 3) },
   neonColor: { value: new Float32Array(NEON_MAX * 3) },
+  // Where each light's shadows are seen from.
+  neonOrigin: { value: new Float32Array(NEON_MAX * 3) },
   // intensity, range, shadows ready (0/1), standoff
   neonParams: { value: new Float32Array(NEON_MAX * 4) },
   neonShadow: { value: shadowTextures },
@@ -118,7 +189,7 @@ export const neonUniforms = {
   // Top at the middle, its fall per metre along ±z, and the room's ambient light.
   neonDarkRoof: { value: new Float32Array(NEON_DARK_MAX * 4) },
   // Window rows: half width, half height, window count (0 when the light is no window), sun; the windows' centres
-  // along the line; and each light's bounce.
+  // along the line; and each light's bounce and size.
   neonWindow: { value: new Float32Array(NEON_MAX * 4) },
   neonWindowOffsets: { value: new Float32Array(NEON_MAX * 4) },
   neonWindowExtra: { value: new Float32Array(NEON_MAX * 4) },
@@ -131,6 +202,7 @@ export const neonUniforms = {
   neonFarRooms: { value: new Float32Array(NEON_FAR) },
   neonFarWindow: { value: new Float32Array(NEON_FAR) },
   neonFarBounds: { value: new Float32Array(NEON_FAR * 4) },
+  neonFarRadius: { value: new Float32Array(NEON_FAR) },
   neonSun: { value: new Float32Array(SUN_DIRECTION.toArray()) },
   neonSunColor: { value: new Float32Array(SUN_COLOR.toArray()) },
 }
@@ -146,17 +218,20 @@ uniform mat4 neonDarkMatrix[ ${NEON_DARK_MAX} ];
 uniform vec3 neonDarkHalf[ ${NEON_DARK_MAX} ];
 uniform vec4 neonDarkRoof[ ${NEON_DARK_MAX} ];
 
-// How far p is inside each dark room in effect (0 outside, 1 inside, blended over a couple of centimetres at its walls).
-vec4 neonRooms( vec3 p ) {
-  vec4 rooms = vec4( 0.0 );
+// How far a point is inside each dark room in effect (0 outside, 1 inside, blended over a couple of centimetres at its
+// walls), one value per room.
+struct NeonRoomSet { float v[ ${NEON_DARK_MAX} ]; };
+NeonRoomSet neonRooms( vec3 p ) {
+  NeonRoomSet rooms;
   #pragma unroll_loop_start
   for ( int i = 0; i < ${NEON_DARK_MAX}; i ++ ) {
+    rooms.v[ i ] = 0.0;
     if ( neonDarkHalf[ i ].x > 0.0 ) {
       vec3 local = ( neonDarkMatrix[ i ] * vec4( p, 1.0 ) ).xyz;
       float top = neonDarkRoof[ i ].x - neonDarkRoof[ i ].y * abs( local.z );
       vec3 room = vec3( neonDarkHalf[ i ].x - abs( local.x ), min( local.y + neonDarkHalf[ i ].y, top - local.y ), neonDarkHalf[ i ].z - abs( local.z ) );
       vec3 inside = smoothstep( vec3( -0.02 ), vec3( 0.02 ), room );
-      rooms[ i ] = inside.x * inside.y * inside.z;
+      rooms.v[ i ] = inside.x * inside.y * inside.z;
     }
   }
   #pragma unroll_loop_end
@@ -164,11 +239,11 @@ vec4 neonRooms( vec3 p ) {
 }
 
 // How dark it is at p: x is 1 inside a dark room and 0 outside; y is that room's ambient light.
-vec2 neonDarknessIn( vec4 rooms ) {
+vec2 neonDarknessIn( NeonRoomSet rooms ) {
   vec2 dark = vec2( 0.0 );
   #pragma unroll_loop_start
   for ( int i = 0; i < ${NEON_DARK_MAX}; i ++ ) {
-    if ( rooms[ i ] > dark.x ) dark = vec2( rooms[ i ], neonDarkRoof[ i ].z );
+    if ( rooms.v[ i ] > dark.x ) dark = vec2( rooms.v[ i ], neonDarkRoof[ i ].z );
   }
   #pragma unroll_loop_end
   return dark;
@@ -195,6 +270,7 @@ uniform vec3 neonStart[ ${NEON_MAX} ];
 uniform vec3 neonEnd[ ${NEON_MAX} ];
 uniform vec3 neonFacing[ ${NEON_MAX} ];
 uniform vec3 neonColor[ ${NEON_MAX} ];
+uniform vec3 neonOrigin[ ${NEON_MAX} ];
 uniform vec4 neonParams[ ${NEON_MAX} ];
 uniform samplerCube neonShadow[ ${NEON_MAX} ];
 uniform vec4 neonWindow[ ${NEON_MAX} ];
@@ -210,6 +286,7 @@ uniform float neonFarRooms[ ${NEON_FAR} ];
 uniform float neonFarWindow[ ${NEON_FAR} ];
 // A sphere round each far light that holds everything it reaches: centre, and radius squared.
 uniform vec4 neonFarBounds[ ${NEON_FAR} ];
+uniform float neonFarRadius[ ${NEON_FAR} ];
 uniform vec3 neonSun;
 uniform vec3 neonSunColor;
 #include <neon_dark_pars>
@@ -244,45 +321,67 @@ float neonSunThrough( vec3 p, vec3 center, vec3 axis, vec3 facing, vec4 window, 
     * ( 1.0 - smoothstep( window.y - soft, window.y + soft, abs( v ) ) );
 }
 
-// Soft shadow from the cube map around the middle of the light: up to eight taps on a disc, turned per pixel so the
+// Soft shadow from the cube map around the light's shadow point: up to eight taps on a disc, turned per pixel so the
 // edge dithers smoothly instead of stepping. The first four (spread over the whole disc) settle most pixels, which
-// are fully lit or fully shadowed; only near a shadow's edge are the other four taken. The bias grows with distance
-// and with how obliquely the light hits, which is where a cube map's texels are stretched thinnest.
+// are fully lit or fully shadowed; only near a shadow's edge are the other four taken, and only within 7 m of the
+// light (further off, a shadow's edge is a few pixels wide and four taps draw it as well).
+// The bias must stay thinner than a wall (14 cm), or light seeps through to the far side and along the foot of the
+// wall. \`facing\` is signed: a surface turned away from the light can only be reached through its own wall, so it
+// takes just a small bias; a surface facing it takes one that grows with distance and obliqueness (where a cube map's
+// texels stretch), capped below a wall's thickness. The disc stops widening past 4 m (about 8 cm across), so far
+// surfaces do not need a bigger bias to clear it.
 float neonShadowAt( samplerCube map, vec3 fromCenter, float range, float facing ) {
   float dist = length( fromCenter );
-  float bias = ( 0.02 + 0.012 * dist ) * ( 1.0 + 3.0 * ( 1.0 - facing ) );
+  float bias = facing <= 0.0 ? 0.03 : min( ( 0.015 + 0.006 * dist ) * ( 1.0 + 2.0 * ( 1.0 - facing ) ), 0.11 );
   float depth = ( dist - bias ) / range;
   vec3 dir = fromCenter / max( dist, 1e-4 );
   vec3 side = normalize( cross( dir, abs( dir.y ) < 0.9 ? vec3( 0.0, 1.0, 0.0 ) : vec3( 1.0, 0.0, 0.0 ) ) );
   vec3 up = cross( dir, side );
   float turn = 6.2831853 * fract( 52.9829189 * fract( dot( gl_FragCoord.xy, vec2( 0.06711056, 0.00583715 ) ) ) );
+  float spread = 0.02 * min( 1.0, 4.0 / max( dist, 1e-3 ) );
   float lit = 0.0;
   // Taps 0, 2, 4, 6 first (inner to outer), then 1, 3, 5, 7.
   for ( int pass = 0; pass < 2; pass ++ ) {
     for ( int n = 0; n < 4; n ++ ) {
       float k = float( n * 2 + pass );
-      float r = sqrt( ( k + 0.5 ) / 8.0 ) * 0.02;
+      float r = sqrt( ( k + 0.5 ) / 8.0 ) * spread;
       float a = k * 2.3999632 + turn;
       lit += step( depth, textureLod( map, dir + ( side * cos( a ) + up * sin( a ) ) * r, 0.0 ).r );
     }
-    if ( pass == 0 && ( lit < 0.5 || lit > 3.5 ) ) return lit / 4.0;
+    if ( pass == 0 && ( lit < 0.5 || lit > 3.5 || dist > 7.0 ) ) return lit / 4.0;
   }
   return lit / 8.0;
 }
 
 // Light from a uniformly glowing line, per unit of its total brightness: the integral of 1/d² along it.
 // Far away this is the usual 1/d²; beside a long tube it falls off only as 1/h, which is what gives a wall
-// behind a sign its smooth band instead of a hot spot.
-float neonLineFactor( vec3 p, vec3 start, vec3 end ) {
+// behind a sign its smooth band instead of a hot spot. \`radius\` is how big the glowing thing is across the line:
+// closer than that, the light stops growing, as beside a real window or lamp.
+float neonLineFactor( vec3 p, vec3 start, vec3 end, float radius ) {
   vec3 segment = end - start;
   float len = length( segment );
   vec3 fromStart = start - p;
-  if ( len < 1e-3 ) return 1.0 / ( dot( fromStart, fromStart ) + 0.0025 );
+  float soft = max( radius * radius, 0.0025 );
+  if ( len < 1e-3 ) return 1.0 / ( dot( fromStart, fromStart ) + soft );
   vec3 u = segment / len;
   float t0 = dot( fromStart, u );
   vec3 perpendicular = fromStart - u * t0;
-  float h = sqrt( dot( perpendicular, perpendicular ) + 0.0025 );
+  float h = sqrt( dot( perpendicular, perpendicular ) + soft );
   return ( atan( ( t0 + len ) / h ) - atan( t0 / h ) ) / ( h * len );
+}
+
+// A row of windows lets light in only through its panes: the line factor of each pane (\`window\`: half width, half
+// height, count; \`offsets\`: the panes' middles along the row, from its middle), weighted by its share of the glass.
+float neonPanesFactor( vec3 p, vec3 start, vec3 end, vec4 window, vec4 offsets, float radius ) {
+  vec3 axis = end - start;
+  vec3 u = axis / max( length( axis ), 1e-4 );
+  vec3 middle = ( start + end ) * 0.5;
+  float paneHalf = window.x * 0.9;
+  float sum = neonLineFactor( p, middle + u * ( offsets.x - paneHalf ), middle + u * ( offsets.x + paneHalf ), radius );
+  if ( window.z > 1.5 ) sum += neonLineFactor( p, middle + u * ( offsets.y - paneHalf ), middle + u * ( offsets.y + paneHalf ), radius );
+  if ( window.z > 2.5 ) sum += neonLineFactor( p, middle + u * ( offsets.z - paneHalf ), middle + u * ( offsets.z + paneHalf ), radius );
+  if ( window.z > 3.5 ) sum += neonLineFactor( p, middle + u * ( offsets.w - paneHalf ), middle + u * ( offsets.w + paneHalf ), radius );
+  return sum / window.z;
 }
 `
 chunks.neon_fragment = /* glsl */`
@@ -297,7 +396,7 @@ chunks.neon_fragment = /* glsl */`
   vec3 neonGloss = vec3( 0.0 );
   float neonTotal = 0.0;
   // Which dark rooms this surface is in, how dark it is here, and that room's ambient light.
-  vec4 neonHere = neonRooms( vNeonWorld + neonN * 0.1 );
+  NeonRoomSet neonHere = neonRooms( vNeonWorld + neonN * 0.1 );
   vec2 neonDark = neonDarknessIn( neonHere );
   #pragma unroll_loop_start
   for ( int i = 0; i < ${NEON_MAX}; i ++ ) {
@@ -312,7 +411,9 @@ chunks.neon_fragment = /* glsl */`
       if ( dist < range && front > 0.0 ) {
         vec3 L = toLight / max( dist, 1e-4 );
         float window = pow( clamp( 1.0 - pow( dist / range, 4.0 ), 0.0, 1.0 ), 2.0 );
-        float reach = neonParams[ i ].x * neonLineFactor( vNeonWorld, neonStart[ i ], neonEnd[ i ] ) * window * front;
+        float reach = neonParams[ i ].x * window * front * ( neonWindow[ i ].z > 0.0
+          ? neonPanesFactor( vNeonWorld, neonStart[ i ], neonEnd[ i ], neonWindow[ i ], neonWindowOffsets[ i ], neonWindowExtra[ i ].y )
+          : neonLineFactor( vNeonWorld, neonStart[ i ], neonEnd[ i ], neonWindowExtra[ i ].y ) );
         float facing = max( dot( neonN, L ), 0.0 );
         float bounce = neonWindowExtra[ i ].x > 0.0 ? neonWindowExtra[ i ].x : 0.06;
         // Daylight comes in through the opening, so it only grazes the window's own wall: fade it out over the
@@ -326,8 +427,10 @@ chunks.neon_fragment = /* glsl */`
         if ( potential > 0.002 || beam > 0.0 ) {
           float shade = 1.0;
           if ( neonParams[ i ].z > 0.5 ) {
-            vec3 fromCenter = vNeonWorld + neonN * 0.03 - ( neonStart[ i ] + neonEnd[ i ] ) * 0.5;
-            shade = neonShadowAt( neonShadow[ i ], fromCenter, range, facing );
+            // The point is nudged off its surface (further for far lights, whose texels are bigger) before the test.
+            float signedFacing = dot( neonN, L );
+            vec3 fromCenter = vNeonWorld + neonN * ( 0.03 + 0.004 * dist ) * step( 0.0, signedFacing ) - neonOrigin[ i ];
+            shade = neonShadowAt( neonShadow[ i ], fromCenter, range, signedFacing );
           }
           // Direct light, plus some that has bounced off the room and reaches every side. The bounce is
           // shadowed too, so no light seeps through a floor or wall.
@@ -364,7 +467,7 @@ chunks.neon_fragment = /* glsl */`
         if ( neonFarRooms[ i ] < 0.5 ) same = 1.0 - neonDark.x;
         else for ( int j = 0; j < ${NEON_DARK_MAX}; j ++ ) {
           float lightIn = mod( floor( neonFarRooms[ i ] / exp2( float( j ) ) ), 2.0 );
-          same *= mix( 1.0 - neonHere[ j ], neonHere[ j ], lightIn );
+          same *= mix( 1.0 - neonHere.v[ j ], neonHere.v[ j ], lightIn );
         }
       }
       if ( neonFarParams[ i ].x > 0.0 && same > 0.0 ) {
@@ -377,7 +480,7 @@ chunks.neon_fragment = /* glsl */`
         if ( dist < range && front > 0.0 ) {
           vec3 L = toLight / max( dist, 1e-4 );
           float window = pow( clamp( 1.0 - pow( dist / range, 4.0 ), 0.0, 1.0 ), 2.0 );
-          float reach = neonFarParams[ i ].x * neonLineFactor( vNeonWorld, neonFarStart[ i ], neonFarEnd[ i ] ) * window * front;
+          float reach = neonFarParams[ i ].x * neonLineFactor( vNeonWorld, neonFarStart[ i ], neonFarEnd[ i ], neonFarRadius[ i ] ) * window * front;
           // Daylight only grazes its window's own wall, as for the shadowed lights.
           if ( neonFarWindow[ i ] > 0.5 ) reach *= smoothstep( 0.04, 0.25, dot( vNeonWorld - neonFarStart[ i ], neonFarFacing[ i ] ) );
           float energy = reach * ( max( dot( neonN, L ), 0.0 ) + neonFarParams[ i ].w ) * same;
@@ -480,13 +583,16 @@ const white = new THREE.Color(1, 1, 1)
 type Light = {
   sign: THREE.Object3D; spec: NeonLightSpec; color: THREE.Color
   start: THREE.Vector3; end: THREE.Vector3; center: THREE.Vector3; facing: THREE.Vector3
+  /** Where its shadows are seen from (see NeonLightSpec.shadowFrom). */
+  origin: THREE.Vector3
   visible: boolean; distance: number; brightness: number
   /** The dark rooms it is inside (see roomsOf). */
   rooms?: THREE.Object3D[]
   /** When it last came on (in either set), for its fade-in, and whether it was on last frame. */
   litAt: number; lit: boolean
 }
-type MoverState = { key: string; position: THREE.Vector3 }
+/** Where a mover is, and its transform rounded so that only real movement changes it. */
+type MoverState = { key: Int32Array; position: THREE.Vector3 }
 type Slot = { camera: THREE.CubeCamera; light: Light | null; ready: boolean; rendered: number; seen: Map<THREE.Object3D, MoverState>; pending: number[] }
 
 /** Every neon light in one scene. Call `update` every frame before rendering. */
@@ -515,8 +621,22 @@ export class NeonLights {
   private castersStale = true
   private readonly clear = new THREE.Color()
   private readonly rooms: THREE.Object3D[] = []
-  private readonly roomMatrix = new THREE.Matrix4()
   private readonly roomCenter = new THREE.Vector3()
+  private readonly transient = new Set<THREE.Object3D>()
+  private farLights: Light[] = []
+  /** Each dark room's world-to-room matrix (rooms never move). */
+  private readonly roomInverse = new Map<THREE.Object3D, THREE.Matrix4>()
+  /** The dark rooms in effect last frame. */
+  private roomsInEffect: THREE.Object3D[] = []
+  /** Every mesh that could cast a shadow, from the last search of the scene, and whether it can move. */
+  private candidates: { mesh: THREE.Mesh; moving: boolean }[] = []
+  private candidatesFound = -Infinity
+  /** This frame's place of every mover, worked out once and shared by all the lights. */
+  private readonly moverStates = new Map<THREE.Object3D, MoverState>()
+  private moverFrame = -1
+  private frame = 0
+  /** Whether the lighting is still settling (a light fading up, shadows being drawn): it wants another frame. */
+  private settling = false
 
   constructor(private readonly scene: THREE.Scene) {
     scene.traverse(object => {
@@ -527,13 +647,40 @@ export class NeonLights {
 
   get count() { return this.lights.length }
 
-  /** Signs lit this frame, nearest first. */
+  /** The lighting is mid-change (a light fading up, a shadow being drawn, a burst burning) and needs more frames. */
+  get busy() { return this.settling || this.transient.size > 0 }
+
+  /** Stop lighting from a light (a transient one, done). */
+  remove(sign: THREE.Object3D) {
+    const index = this.lights.findIndex(light => light.sign === sign)
+    if (index < 0) return
+    const [light] = this.lights.splice(index, 1)
+    for (const slot of this.slots) if (slot.light === light) slot.light = null
+  }
+
+  /** Take in transient lights that have appeared, and let go of those that have gone (bursts, once burnt out). */
+  private syncTransient(now: number) {
+    for (const sign of transientLights) {
+      const burst = sign.userData.burst as { born: number; life: number; age: number } | undefined
+      if (!burst) continue
+      burst.age = now - burst.born
+      if (burst.age >= burst.life || burst.age < -1) transientLights.delete(sign)
+    }
+    for (const sign of transientLights) if (!this.transient.has(sign)) { this.transient.add(sign); this.add(sign) }
+    for (const sign of this.transient) if (!transientLights.has(sign)) { this.transient.delete(sign); this.remove(sign) }
+  }
+
+  /** Signs lit this frame with shadows, in slot order. */
   get active() { return this.slots.flatMap(slot => slot.light ? [slot.light.sign] : []) }
+  /** Signs lit this frame from further away, without shadows. */
+  get distant() { return this.farLights.map(light => light.sign) }
+  /** Every light, for tools: its sign, line ends and shadow point in the world as of the last update. */
+  get all() { return this.lights.map(({ sign, start, end, origin, visible }) => ({ sign, start, end, origin, visible })) }
 
   add(sign: THREE.Object3D) {
     const spec = sign.userData.neonLight as NeonLightSpec
     this.lights.push({ sign, spec, color: new THREE.Color(spec.color), start: new THREE.Vector3(), end: new THREE.Vector3(),
-      center: new THREE.Vector3(), facing: new THREE.Vector3(), visible: false, distance: Infinity, brightness: 0, litAt: -Infinity, lit: false })
+      center: new THREE.Vector3(), facing: new THREE.Vector3(), origin: new THREE.Vector3(), visible: false, distance: Infinity, brightness: 0, litAt: -Infinity, lit: false })
   }
 
   /** Light the scene from the signs nearest `viewer`, and refresh at most one shadow map. */
@@ -543,23 +690,41 @@ export class NeonLights {
       for (const target of shadowTargets) renderer.initRenderTarget(target)
       this.initialized = true
     }
+    this.syncTransient(now)
     // The nearest dark rooms are in effect, measured to their walls (zero inside one); the rest are too far away
     // to see into.
-    const rooms: THREE.Object3D[] = this.rooms.map(room => ({ room, distance: this.roomDistance(room, viewer) }))
-      .sort((a, b) => a.distance - b.distance).slice(0, NEON_DARK_MAX).map(({ room }) => room)
+    const measured = this.rooms.map(room => ({ room, distance: this.roomDistance(room, viewer) }))
+    const viewerRooms = measured.filter(({ distance }) => distance <= 0).map(({ room }) => room)
+    const rooms: THREE.Object3D[] = measured
+      .sort((a, b) => (a.distance - (this.roomsInEffect.includes(a.room) ? ROOM_HOLD : 0)) - (b.distance - (this.roomsInEffect.includes(b.room) ? ROOM_HOLD : 0)))
+      .slice(0, NEON_DARK_MAX).map(({ room }) => room)
+    this.roomsInEffect = rooms
+    this.frame++
+    let settling = false
     neonUniforms.neonDarkHalf.value.fill(0)
     rooms.forEach((room, index) => {
-      room.updateWorldMatrix(true, false)
-      this.roomMatrix.copy(room.matrixWorld).invert().toArray(neonUniforms.neonDarkMatrix.value, index * 16)
+      this.inverseOf(room).toArray(neonUniforms.neonDarkMatrix.value, index * 16)
       const spec = room.userData.darkRoom as DarkRoomSpec
       neonUniforms.neonDarkHalf.value.set(spec.half, index * 3)
       neonUniforms.neonDarkRoof.value.set([spec.pitch?.ridge ?? spec.half[1], spec.pitch?.slope ?? 0, spec.ambient ?? 0.003, 0], index * 4)
     })
     for (const light of this.lights) this.place(light, viewer)
     // Nearest first, measured to the edge of each light's reach: a big window a little further away matters
-    // more than a small sign just beyond its own range.
-    const priority = (light: Light) => Math.max(0, light.distance - light.spec.range) * 4 + light.distance
-    const chosen = this.lights.filter(light => light.visible && light.distance < VIEW_LIMIT)
+    // more than a small sign just beyond its own range. The room you are in comes first, and a light keeps its slot
+    // until another is clearly more important (see HOLD, ELSEWHERE). A burst comes before everything.
+    const held = new Set(this.slots.flatMap(slot => slot.light ? [slot.light] : []))
+    const here = (light: Light) => {
+      const own = this.roomsOf(light)
+      return viewerRooms.length ? own.some(room => viewerRooms.includes(room)) : own.length === 0
+    }
+    const rank = new Map<Light, number>()
+    for (const light of this.lights) {
+      if (!light.visible || light.distance >= FAR_LIMIT) continue
+      rank.set(light, light.spec.instant ? -Infinity
+        : Math.max(0, light.distance - light.spec.range) * 4 + light.distance + (here(light) ? 0 : ELSEWHERE) - (held.has(light) ? HOLD : 0))
+    }
+    const priority = (light: Light) => rank.get(light)!
+    const chosen = [...rank.keys()].filter(light => light.distance < VIEW_LIMIT && !light.spec.shadowless)
       .sort((a, b) => priority(a) - priority(b)).slice(0, NEON_MAX)
     // Lights keep their slot while they stay chosen, so their shadow maps stay valid.
     for (const slot of this.slots) if (slot.light && !chosen.includes(slot.light)) slot.light = null
@@ -569,44 +734,54 @@ export class NeonLights {
       Object.assign(slot, { light, ready: false, rendered: -Infinity, seen: new Map(), pending: [...ALL_FACES] })
       this.castersStale = true
     }
-    const { neonStart, neonEnd, neonFacing, neonColor, neonParams, neonWindow, neonWindowOffsets, neonWindowExtra } = neonUniforms
+    const { neonStart, neonEnd, neonFacing, neonColor, neonOrigin, neonParams, neonWindow, neonWindowOffsets, neonWindowExtra } = neonUniforms
     this.slots.forEach((slot, index) => {
       const light = slot.light
       if (!light) { neonParams.value[index * 4] = 0; return }
       const window = light.spec.window
       neonWindow.value.set(window ? [window.width / 2, window.height / 2, Math.min(4, window.offsets.length), window.sun] : [0, 0, 0, 0], index * 4)
       neonWindowOffsets.value.set([0, 1, 2, 3].map(k => window?.offsets[k] ?? 0), index * 4)
-      neonWindowExtra.value.set([light.spec.bounce ?? 0, 0, 0, 0], index * 4)
+      neonWindowExtra.value.set([light.spec.bounce ?? 0, light.spec.radius ?? 0.05, 0, 0], index * 4)
+      light.origin.toArray(neonOrigin.value, index * 3)
       light.start.toArray(neonStart.value, index * 3)
       light.end.toArray(neonEnd.value, index * 3)
       light.facing.toArray(neonFacing.value, index * 3)
       light.color.toArray(neonColor.value, index * 3)
-      neonParams.value.set([light.brightness * this.fade(light, now), light.spec.range, Number(this.shadows && slot.ready), light.spec.standoff], index * 4)
+      const fade = this.fade(light, now)
+      if (fade < 1 || (this.shadows && !slot.ready)) settling = true
+      neonParams.value.set([light.brightness * fade, light.spec.range, Number(this.shadows && slot.ready), light.spec.standoff], index * 4)
     })
     // The next lights out to FAR_LIMIT shine too, without shadows: outdoor ones, and indoor ones whose rooms are all
     // in effect (so the shader can keep each to its own rooms).
     const roomBits = (light: Light) => this.roomsOf(light).reduce((bits, room) => bits < 0 || !rooms.includes(room) ? -1 : bits | 1 << rooms.indexOf(room), 0)
-    const far = this.lights.filter(light => light.visible && light.distance < FAR_LIMIT && !chosen.includes(light) && roomBits(light) >= 0)
+    const near = new Set(chosen)
+    const far = [...rank.keys()].filter(light => !near.has(light) && roomBits(light) >= 0)
       .sort((a, b) => priority(a) - priority(b)).slice(0, NEON_FAR)
+    this.farLights = far
     const { neonFarStart, neonFarEnd, neonFarFacing, neonFarColor, neonFarParams, neonFarRooms } = neonUniforms
     neonFarParams.value.fill(0)
     far.forEach((light, index) => {
       neonFarRooms.value[index] = roomBits(light)
       neonUniforms.neonFarWindow.value[index] = light.spec.window ? 1 : 0
+      neonUniforms.neonFarRadius.value[index] = light.spec.radius ?? 0.05
       const reach = light.spec.range + light.start.distanceTo(light.end) / 2
       neonUniforms.neonFarBounds.value.set([light.center.x, light.center.y, light.center.z, reach * reach], index * 4)
       light.start.toArray(neonFarStart.value, index * 3)
       light.end.toArray(neonFarEnd.value, index * 3)
       light.facing.toArray(neonFarFacing.value, index * 3)
       light.color.toArray(neonFarColor.value, index * 3)
-      neonFarParams.value.set([light.brightness * this.fade(light, now), light.spec.range, light.spec.standoff, light.spec.bounce ?? 0.06], index * 4)
+      const fade = this.fade(light, now)
+      if (fade < 1) settling = true
+      neonFarParams.value.set([light.brightness * fade, light.spec.range, light.spec.standoff, light.spec.bounce ?? 0.06], index * 4)
     })
+    this.settling = settling
     // Whatever is not lit now fades up again next time it comes on; moving between the sets keeps it steady.
     const litNow = new Set([...chosen, ...far])
     for (const light of this.lights) {
       if (!litNow.has(light)) light.lit = false
     }
     if (!this.shadows) return
+    if (now - this.candidatesFound > CANDIDATE_INTERVAL) { this.findCandidates(); this.candidatesFound = now; this.castersStale = true }
     if (this.castersStale || now - this.castersCollected > CASTER_INTERVAL) {
       this.collectCasters()
       this.castersCollected = now
@@ -616,14 +791,17 @@ export class NeonLights {
     // that has waited longest, among those where something has moved, renders just the faces that see the movement.
     let next = this.slots.find(slot => slot.light && !slot.ready), faces = ALL_FACES
     if (next) {
-      faces = next.pending.splice(0, NEW_FACES_PER_FRAME)
+      // A burst draws every face at once: it lasts a moment, and must not leak through walls while it starts.
+      faces = next.pending.splice(0, next.light!.spec.instant ? ALL_FACES.length : NEW_FACES_PER_FRAME)
       if (next.pending.length) {
         if (faces.length) this.renderShadow(renderer, next, faces)
         return
       }
     } else {
-      for (const slot of this.slots.filter(slot => slot.light && slot.light.distance < slot.light.spec.range + 3
-        && now - slot.rendered > SHADOW_INTERVAL).sort((a, b) => a.rendered - b.rendered)) {
+      // Lights near the player keep up with movement every SHADOW_INTERVAL; further ones less often.
+      const due = (slot: Slot) => now - slot.rendered > (slot.light!.distance < NEAR_SHADOWS ? SHADOW_INTERVAL : SLOW_SHADOW_INTERVAL)
+      for (const slot of this.slots.filter(slot => slot.light && slot.light.distance < slot.light.spec.range + 3 && due(slot))
+        .sort((a, b) => a.rendered - b.rendered)) {
         const moved = this.moved(slot)
         if (!moved.length) continue
         faces = this.facesSeeing(slot, moved)
@@ -635,62 +813,94 @@ export class NeonLights {
     this.renderShadow(renderer, next, faces)
     next.ready = true
     next.rendered = now
-    next.seen = this.moversNear(next.light)
+    next.seen = this.snapshotNear(next.light)
     neonParams.value[this.slots.indexOf(next) * 4 + 2] = 1
+  }
+
+  private inverseOf(room: THREE.Object3D) {
+    let inverse = this.roomInverse.get(room)
+    if (!inverse) {
+      room.updateWorldMatrix(true, false)
+      inverse = room.matrixWorld.clone().invert()
+      this.roomInverse.set(room, inverse)
+    }
+    return inverse
   }
 
   /** A light coming on fades up over FADE_IN instead of popping on; one that stays on, in either set, stays steady. */
   private fade(light: Light, now: number) {
+    if (light.spec.instant) return 1
     if (!light.lit) { light.lit = true; light.litAt = now }
     return THREE.MathUtils.smoothstep(now - light.litAt, 0, FADE_IN)
   }
 
   /** The dark rooms the light is inside (none for an outdoor light). Lights stay put, so this is worked out once. */
   private roomsOf(light: Light) {
-    light.rooms ??= this.rooms.filter(room => this.roomDistance(room, light.center) <= 0.05)
+    light.rooms ??= this.rooms.filter(room => this.roomDistance(room, light.origin) <= 0.05)
     return light.rooms
   }
 
   private roomDistance(room: THREE.Object3D, viewer: THREE.Vector3) {
-    room.updateWorldMatrix(true, false)
-    const local = this.roomCenter.copy(viewer).applyMatrix4(this.roomMatrix.copy(room.matrixWorld).invert())
+    const local = this.roomCenter.copy(viewer).applyMatrix4(this.inverseOf(room))
     const [x, y, z] = (room.userData.darkRoom as DarkRoomSpec).half
     return Math.hypot(Math.max(0, Math.abs(local.x) - x), Math.max(0, Math.abs(local.y) - y), Math.max(0, Math.abs(local.z) - z))
   }
 
-  /** Where each mover within the light's reach is, rounded so that only real movement counts. */
-  private moversNear(light: Light) {
-    const near = new Map<THREE.Object3D, MoverState>()
-    const reach = light.spec.range + MOVER_RADIUS
+  /**
+   * Where every mover is this frame, rounded so that only real movement counts: worked out once a frame and shared by
+   * all the lights, reusing the same objects, so a still scene costs a few comparisons and makes no garbage.
+   */
+  private moversNow() {
+    if (this.moverFrame === this.frame) return this.moverStates
+    this.moverFrame = this.frame
+    const live = new Set(this.movers)
+    for (const mover of this.moverStates.keys()) if (!live.has(mover)) this.moverStates.delete(mover)
     for (const mover of this.movers) {
       // A character is placed by its hips, which walk and turn with it; anything else by its own transform.
       const bone = (mover as THREE.SkinnedMesh).isSkinnedMesh ? (mover as THREE.SkinnedMesh).skeleton.bones[0] : null
       const e = (bone ?? mover).matrixWorld.elements
-      const position = new THREE.Vector3(e[12], e[13], e[14])
-      if (position.distanceTo(light.center) > reach) continue
-      const round = (value: number, step: number) => Math.round(value / step)
-      near.set(mover, { position, key: [round(e[12], MOVER_STEP), round(e[13], MOVER_STEP), round(e[14], MOVER_STEP),
-        round(e[0], 0.08), round(e[2], 0.08), round(e[8], 0.08), round(e[10], 0.08)].join(',') })
+      let state = this.moverStates.get(mover)
+      if (!state) { state = { key: new Int32Array(7), position: new THREE.Vector3() }; this.moverStates.set(mover, state) }
+      state.position.set(e[12], e[13], e[14])
+      const k = state.key
+      k[0] = Math.round(e[12] / MOVER_STEP); k[1] = Math.round(e[13] / MOVER_STEP); k[2] = Math.round(e[14] / MOVER_STEP)
+      k[3] = Math.round(e[0] / 0.08); k[4] = Math.round(e[2] / 0.08); k[5] = Math.round(e[8] / 0.08); k[6] = Math.round(e[10] / 0.08)
+    }
+    return this.moverStates
+  }
+
+  private within(light: Light, position: THREE.Vector3) {
+    return position.distanceTo(light.origin) <= light.spec.range + MOVER_RADIUS
+  }
+
+  /** A copy of the movers within the light's reach, as its shadow now shows them. */
+  private snapshotNear(light: Light) {
+    const near = new Map<THREE.Object3D, MoverState>()
+    for (const [mover, state] of this.moversNow()) {
+      if (this.within(light, state.position)) near.set(mover, { key: state.key.slice(), position: state.position.clone() })
     }
     return near
   }
 
   /** The places (before and after) of every mover whose shadow on this light has changed since it rendered. */
   private moved(slot: Slot) {
-    const now = this.moversNear(slot.light!), changed: THREE.Vector3[] = []
-    for (const [mover, state] of now) {
-      const before = slot.seen.get(mover)
-      if (before?.key === state.key) continue
+    const light = slot.light!, changed: THREE.Vector3[] = []
+    const same = (a: Int32Array, b: Int32Array) => { for (let i = 0; i < 7; i++) if (a[i] !== b[i]) return false; return true }
+    const states = this.moversNow()
+    for (const [mover, state] of states) {
+      const inside = this.within(light, state.position), before = slot.seen.get(mover)
+      if (!inside) { if (before) changed.push(before.position); continue }
+      if (before && same(before.key, state.key)) continue
       changed.push(state.position)
       if (before) changed.push(before.position)
     }
-    for (const [mover, before] of slot.seen) if (!now.has(mover)) changed.push(before.position)
+    for (const [mover, before] of slot.seen) if (!states.has(mover)) changed.push(before.position)
     return changed
   }
 
   /** The cube faces whose view takes in any of these places. */
   private facesSeeing(slot: Slot, places: THREE.Vector3[]) {
-    slot.camera.position.copy(slot.light!.center)
+    slot.camera.position.copy(slot.light!.origin)
     slot.camera.updateMatrixWorld()
     return ALL_FACES.filter(face => {
       const camera = slot.camera.children[face] as THREE.PerspectiveCamera
@@ -710,41 +920,52 @@ export class NeonLights {
     light.start.set(...spec.start).applyMatrix4(sign.matrixWorld)
     light.end.set(...spec.end).applyMatrix4(sign.matrixWorld)
     light.center.copy(light.start).add(light.end).multiplyScalar(0.5)
+    if (spec.shadowFrom) light.origin.set(...spec.shadowFrom).applyMatrix4(sign.matrixWorld)
+    else light.origin.copy(light.center)
     light.facing.set(0, 0, 1).transformDirection(sign.matrixWorld)
     light.distance = light.center.distanceTo(viewer)
   }
 
   /**
-   * Gather every solid mesh within reach of a lit light into the shadow scene. Signs and lamps
-   * (`userData.neonFixture`) never shadow themselves, and nothing the camera holds (the first-person gun and arms)
-   * casts either.
+   * Search the whole scene for meshes that could cast a shadow. Signs and lamps (`userData.neonFixture`) never shadow
+   * themselves, and nothing the camera holds (the first-person gun and arms) casts either. This walks thousands of
+   * objects, so it runs only every CANDIDATE_INTERVAL; a change of lights just re-sorts its result (collectCasters).
    */
-  private collectCasters() {
-    const lit = this.slots.flatMap(slot => slot.light ? [slot.light] : [])
-    const sphere = new THREE.Sphere()
-    const casters = new Set<THREE.Mesh>()
-    this.movers = []
+  private findCandidates() {
+    const candidates: { mesh: THREE.Mesh; moving: boolean }[] = []
     const visit = (object: THREE.Object3D, excluded: boolean, moving: boolean) => {
       excluded ||= !!(object as THREE.Camera).isCamera || !!object.userData.neonLight || !!object.userData.neonFixture
       moving ||= !!object.userData.doorHinge || !!object.userData.dynamicCollision
       const mesh = object as THREE.Mesh
-      if (mesh.isMesh) {
+      if (mesh.isMesh && !excluded) {
         const material = mesh.material as THREE.Material
         // Unlit things (characters, screens) still block light.
-        let caster = !excluded && !!(material as THREE.MeshBasicMaterial).isMeshBasicMaterial && material.visible && !material.transparent
-        if (caster && !(mesh as THREE.InstancedMesh).isInstancedMesh) {
+        if ((material as THREE.MeshBasicMaterial).isMeshBasicMaterial && material.visible && !material.transparent) {
           if (!mesh.geometry.boundingSphere) mesh.geometry.computeBoundingSphere()
-          sphere.copy(mesh.geometry.boundingSphere!).applyMatrix4(mesh.matrixWorld)
-          caster = lit.some(light => sphere.center.distanceTo(light.center) < light.spec.range + sphere.radius)
-        }
-        if (caster) {
-          casters.add(mesh)
-          if (moving || (mesh as THREE.SkinnedMesh).isSkinnedMesh) this.movers.push(mesh)
+          candidates.push({ mesh, moving: moving || !!(mesh as THREE.SkinnedMesh).isSkinnedMesh })
         }
       }
       for (const child of object.children) visit(child, excluded, moving)
     }
     visit(this.scene, false, false)
+    this.candidates = candidates
+  }
+
+  /** Gather every candidate within reach of a lit light into the shadow scene. */
+  private collectCasters() {
+    const lit = this.slots.flatMap(slot => slot.light ? [slot.light] : [])
+    const sphere = new THREE.Sphere()
+    const casters = new Set<THREE.Mesh>()
+    this.movers = []
+    for (const { mesh, moving } of this.candidates) {
+      if (!mesh.parent) continue
+      if (!(mesh as THREE.InstancedMesh).isInstancedMesh) {
+        sphere.copy(mesh.geometry.boundingSphere!).applyMatrix4(mesh.matrixWorld)
+        if (!lit.some(light => sphere.center.distanceTo(light.center) < light.spec.range + sphere.radius)) continue
+      }
+      casters.add(mesh)
+      if (moving) this.movers.push(mesh)
+    }
     for (const [source, standIn] of this.standIns) if (!casters.has(source)) { standIn.removeFromParent(); this.standIns.delete(source) }
     for (const source of casters) if (!this.standIns.has(source)) {
       const standIn = this.standIn(source)
@@ -807,7 +1028,7 @@ export class NeonLights {
     this.placeStandIns()
     const alpha = renderer.getClearAlpha()
     renderer.getClearColor(this.clear)
-    distanceMaterial.uniforms.origin.value.copy(light.center)
+    distanceMaterial.uniforms.origin.value.copy(light.origin)
     distanceMaterial.uniforms.range.value = light.spec.range
     for (const face of slot.camera.children as THREE.PerspectiveCamera[]) {
       if (face.far !== light.spec.range) { face.far = light.spec.range; face.updateProjectionMatrix() }
@@ -819,7 +1040,7 @@ export class NeonLights {
       slot.camera.coordinateSystem = renderer.coordinateSystem
       slot.camera.updateCoordinateSystem()
     }
-    slot.camera.position.copy(light.center)
+    slot.camera.position.copy(light.origin)
     slot.camera.updateMatrixWorld()
     try {
       if (faces.length === 6) slot.camera.update(renderer, scene)

@@ -1,0 +1,12 @@
+/* The light room's panel (light-lab.ts): a black plate in the corner, greys only, like the rest of the HUD. */
+.light-lab { position: fixed; z-index: 3; left: 18px; top: 18px; width: 250px; padding: 12px 14px; background: #0d0d0deb; color: #f2f2f2;
+  font: 12px/1.4 "Helvetica Neue", Helvetica, Arial, sans-serif; pointer-events: none; border-left: 4px solid #8a8a8a; }
+.light-lab h2 { margin: 0 0 8px; font: 400 16px/1 Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif; letter-spacing: 0.12em; text-transform: uppercase; }
+.light-lab h3 { margin: 10px 0 4px; font: 400 11px/1 Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif; letter-spacing: 0.18em; text-transform: uppercase; color: #8a8a8a; }
+.light-lab ul { margin: 0; padding: 0; list-style: none; }
+.light-lab li { color: #bdbdbd; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.light-lab-switches li { display: grid; grid-template-columns: 26px 1fr auto; align-items: center; padding: 2px 0; color: #8a8a8a; }
+.light-lab-switches li.is-on { color: #f2f2f2; }
+.light-lab kbd { display: inline-grid; place-items: center; width: 18px; height: 18px; background: #fff; color: #000; font: 400 12px/1 Impact, Haettenschweiler, sans-serif; }
+.light-lab b { font-weight: 600; }
+.light-lab p { margin: 10px 0 0; color: #8a8a8a; }

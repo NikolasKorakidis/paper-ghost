@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { lightBurst } from '../render/neon'
 import { Draft, type Point } from '../render/ink'
 import { chargeStage } from './goals'
 import type { MissionState } from './mission'
@@ -154,6 +155,8 @@ export class Charges {
     const center = new THREE.Vector3(...spec.blast.center)
     this.emit({ kind: 'charge-explosion', position: center.clone(), radius: 160 })
     this.flash = 0.35
+    // The blast lights everything round it, with real shadows, and dies away over a second and a half.
+    lightBurst(center.clone().setY(center.y + 1), { color: 0xff8a38, intensity: 170, range: 26, life: 1.5, hold: 0.1, shadows: true, radius: 0.8 })
     const group = new THREE.Group()
     group.name = `${spec.name} · blast`
     group.userData.noCollision = true

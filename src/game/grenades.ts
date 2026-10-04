@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { createPenLines, createPenSilhouette, penPalette, type PenDistanceProfile } from '../render/ballpoint'
 import type { CollisionWorld } from '../player/collision'
+import { lightBurst, transientLights, type NeonLightSpec } from '../render/neon'
 import { GRENADE_RULES, flashStrength, fragDamage, type GrenadeKind } from './balance'
 import type { SoundEvent } from './types'
 import './grenades.css'
@@ -122,6 +123,13 @@ export function smokeHides(center: THREE.Vector3, radius: number, a: THREE.Vecto
   return near.length() < radius * 0.9
 }
 
+/** How long a flashbang's light lasts (s), and how bright it is `age` seconds in: full for a blink, then dying fast. */
+const FLASH_LIGHT_LIFE = 0.9
+export function flashEnvelope(age: number) {
+  if (age < 0 || age >= FLASH_LIGHT_LIFE) return 0
+  return age < 0.05 ? 1 : Math.exp(-(age - 0.05) * 7)
+}
+
 /**
  * The player's grenades, Counter-Strike style: 4 takes one out (again to cycle frag → flash → smoke), left click
  * pulls the pin and throws on release, right click lobs. Thrown grenades bounce and roll with real physics and go off
@@ -142,6 +150,8 @@ export class Grenades {
   private clouds: Cloud[] = []
   private bursts: Burst[] = []
   private scorches: THREE.Object3D[] = []
+  /** The light of each flashbang going off, and how long ago it did (s). */
+  private flashLights: { light: THREE.Object3D; age: number }[] = []
   private effects = new THREE.Group()
   private hand: GrenadeHand
   private belt = document.createElement('div')
@@ -277,6 +287,7 @@ export class Grenades {
     this.hand.root.visible = frame.active && this.equipped
     let moving = this.updateThrown(delta)
     moving = this.updateBursts(delta) || moving
+    moving = this.updateFlashLights(delta) || moving
     moving = this.updateClouds(delta) || moving
     this.updateVeils(delta)
     return moving || this.equipped
@@ -366,6 +377,8 @@ export class Grenades {
   private frag(origin: THREE.Vector3) {
     this.hooks.emit({ kind: 'frag-explosion', position: origin.clone(), radius: RULES.frag.hearing })
     this.burst(origin, 'frag')
+    // A fireball's light: orange, with real shadows, gone in under a second.
+    lightBurst(origin.clone().setY(origin.y + 0.7), { color: 0xffa04a, intensity: 85, range: 14, life: 0.8, hold: 0.06, shadows: true, radius: 0.35 })
     this.scorch(origin)
     this.hooks.blast?.(origin)
     // It hurts the thrower too, unless a wall is in the way.
@@ -381,11 +394,46 @@ export class Grenades {
   private flashbang(origin: THREE.Vector3) {
     this.hooks.emit({ kind: 'flashbang', position: origin.clone(), radius: RULES.flash.hearing })
     this.burst(origin, 'flash')
+    this.flashLight(origin)
     this.hooks.flash?.(origin)
     const { eye, forward } = this.frame
     if (!this.frame.active || !this.hooks.world.visible(eye, origin, ignore) || this.smokeBlocks(eye, origin)) return
     const strength = flashStrength(forward.angleTo(origin.clone().sub(eye)), eye.distanceTo(origin))
     if (strength > 0.02) this.flashPlayer(strength)
+  }
+
+  /**
+   * The flash lights up everything round it: a burst of hard white light, real light with real shadows, that whites
+   * the walls, floor, furniture and anyone near for a moment and dies away in half a second. It spills out of the
+   * room's doorway and windows, so from outside you see the room flare up. It points down with its cut-off plane far
+   * above, so it lights every way but up through the floor above.
+   */
+  private flashLight(origin: THREE.Vector3) {
+    const light = new THREE.Object3D()
+    light.name = 'Flashbang · burst of light'
+    light.position.copy(origin).y += 0.35
+    light.rotation.x = Math.PI / 2
+    const entry = { light, age: 0 }
+    light.userData.neonLight = { start: [-0.05, 0, 0], end: [0.05, 0, 0], color: 0xf4f7ff, intensity: 70, range: 15, standoff: 6,
+      bounce: 0.22, instant: true, dimmer: () => flashEnvelope(entry.age) } satisfies NeonLightSpec
+    this.effects.add(light)
+    transientLights.add(light)
+    this.flashLights.push(entry)
+  }
+
+  private updateFlashLights(delta: number) {
+    for (const entry of [...this.flashLights]) {
+      entry.age += delta
+      if (entry.age < FLASH_LIGHT_LIFE) continue
+      this.removeFlashLight(entry)
+    }
+    return this.flashLights.length > 0
+  }
+
+  private removeFlashLight(entry: { light: THREE.Object3D; age: number }) {
+    transientLights.delete(entry.light)
+    entry.light.removeFromParent()
+    this.flashLights.splice(this.flashLights.indexOf(entry), 1)
   }
 
   /**
@@ -591,6 +639,7 @@ export class Grenades {
     this.clouds = []
     for (const burst of this.bursts) { burst.root.removeFromParent(); disposeObject(burst.root) }
     this.bursts = []
+    for (const entry of [...this.flashLights]) this.removeFlashLight(entry)
     for (const scorch of this.scorches) { scorch.removeFromParent(); disposeObject(scorch) }
     this.scorches = []
     this.blind = { hold: 0, fade: 0, total: 0, peak: 0 }

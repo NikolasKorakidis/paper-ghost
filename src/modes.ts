@@ -5,14 +5,18 @@ import { FIRST_LEVEL, TRAINING_LEVEL, isLevelId, type LevelId } from './levels/c
  * What the page is running. The address never changes: the menu switches modes in place. 'mission' is the first
  * campaign level and 'tutorial' the training ground; `level:<id>` is any level in levels/catalog.ts.
  */
-export type Mode = 'mission' | 'tutorial' | 'explore' | 'load' | `view:${ViewName}` | `level:${string}`
+export type Mode = 'mission' | 'tutorial' | 'explore' | 'load' | `view:${string}` | `level:${string}`
 
-/** The level a mode plays: free roam, the map views and Load game are on the first campaign level. */
+/** The level a mode plays: free roam, Load game and the map views are on the first campaign level, unless a view names another. */
 export function levelOf(mode: Mode): LevelId {
   if (mode === 'tutorial') return TRAINING_LEVEL
   if (mode.startsWith('level:')) { const id = mode.slice(6); return isLevelId(id) ? id : FIRST_LEVEL }
+  // A map view of another level: `view:<view>@<level>`.
+  if (mode.startsWith('view:') && mode.includes('@')) { const id = mode.split('@')[1]; return isLevelId(id) ? id : FIRST_LEVEL }
   return FIRST_LEVEL
 }
+/** The camera bookmark a map-view mode shows (without its level). */
+export const viewOf = (mode: Mode): ViewName | null => mode.startsWith('view:') ? mode.slice(5).split('@')[0] as ViewName : null
 /** Modes that play a level with its mission, and can switch into each other in place. */
 export const playsLevel = (mode: Mode) => mode === 'mission' || mode === 'tutorial' || mode.startsWith('level:')
 

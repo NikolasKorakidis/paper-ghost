@@ -8,9 +8,12 @@ import type { Briefing } from './types'
 import { campaignLevels } from '../levels/catalog'
 
 /** Every other way into the game. Links are relative, so they work on GitHub Pages' /<repository>/ path too. */
-export const MAP_VIEWS: { id: ViewName; label: string; note: string }[] = [
-  { id: 'overview', label: 'Whole compound', note: 'High orbit over the camp' },
-  { id: 'plan', label: 'Top-down plan', note: 'The map from directly above' },
+/** Map views: a camera bookmark on the first level, or `<view>@<level>` on another (the town has its overview and plan). */
+export const MAP_VIEWS: { id: ViewName | `${'overview' | 'plan'}@${string}`; label: string; note: string }[] = [
+  { id: 'overview', label: 'Whole compound', note: 'High orbit over the whole camp' },
+  { id: 'plan', label: 'Top-down plan', note: 'The whole compound from directly above' },
+  { id: 'overview@town', label: 'Whole town', note: 'High orbit over mission two' },
+  { id: 'plan@town', label: 'Town plan', note: 'The whole town from directly above' },
   { id: 'yard', label: 'Compound yard', note: 'Ground level, looking north' },
   { id: 'roof', label: 'Mess hall roof', note: 'Where the mission starts' },
   { id: 'mess', label: 'Mess hall', note: 'Inside the dining hall' },
@@ -20,7 +23,7 @@ export const MAP_VIEWS: { id: ViewName; label: string; note: string }[] = [
   { id: 'rail', label: 'Rail siding', note: 'Down the tracks to the water tower' },
   { id: 'tanks', label: 'Fuel tanks', note: 'The west tank farm' },
 ]
-export type Destination = 'explore' | 'lab' | 'tutorial' | 'mission' | 'load' | `view:${ViewName}` | `level:${string}`
+export type Destination = 'explore' | 'lab' | 'tutorial' | 'mission' | 'load' | `view:${string}` | `level:${string}`
 /** Leave for another mode on this same address (see modes.ts); only the animation lab is a page of its own. */
 export function goToDestination(destination: Destination) {
   if (destination === 'lab') location.assign(new URL('lab.html', location.href).toString())
@@ -31,7 +34,7 @@ const BRAND = 'Stickman: Ghost Ink'
 /** How long the debrief of a campaign win stays before the next mission's briefing comes up by itself. */
 const NEXT_MISSION_SECONDS = 8
 
-type MenuPage = 'home' | 'campaign' | 'pause' | 'newgame' | 'levels' | 'gallery' | 'options' | 'mission' | 'controls' | 'settings' | 'restart' | 'coop' | 'views' | 'leave'
+type MenuPage = 'home' | 'campaign' | 'pause' | 'newgame' | 'levels' | 'gallery' | 'options' | 'mission' | 'controls' | 'settings' | 'restart' | 'coop' | 'views' | 'dev' | 'leave'
 /**
  * Where each page lives. The main menu holds Campaign, Multiplayer, Gallery and Options; the pause page holds what a
  * run in progress needs. Back normally returns along the way you came (`trail`); this is the fallback when you
@@ -39,12 +42,12 @@ type MenuPage = 'home' | 'campaign' | 'pause' | 'newgame' | 'levels' | 'gallery'
  */
 const PARENT: Record<MenuPage, MenuPage> = {
   home: 'home', campaign: 'home', coop: 'home', gallery: 'home', options: 'home', pause: 'home', leave: 'home',
-  newgame: 'campaign', levels: 'campaign', views: 'gallery', settings: 'options', controls: 'options', mission: 'pause', restart: 'pause',
+  newgame: 'campaign', levels: 'campaign', views: 'gallery', dev: 'gallery', settings: 'options', controls: 'options', mission: 'pause', restart: 'pause',
 }
 /** Each page's kanji, set down the edge of its panel (theme-k7.css). */
 const KANJI: Record<MenuPage, string> = {
   home: '幽霊墨', campaign: '作戦', pause: '一時停止', newgame: '新規', levels: '自由任務', gallery: '画廊', options: '設定',
-  mission: '任務', controls: '操作', settings: '調整', restart: '再開始', coop: '協力', views: '視点', leave: '撤退',
+  mission: '任務', controls: '操作', settings: '調整', restart: '再開始', coop: '協力', views: '視点', dev: '開発', leave: '撤退',
 }
 const back = '<button class="menu-back" data-menu-back><span aria-hidden="true">←</span> Back <kbd>Esc</kbd></button>'
 /** `leaveWarning` names what leaving to another mode would lose, or null when nothing is at stake. */
@@ -183,6 +186,16 @@ export class MissionMenu {
           <button class="main-entry" data-menu-open="views"><strong>Map views</strong><span>Fly-over cameras around the camp</span></button>
           <button class="main-entry" data-menu-go="explore"><strong>Free roam</strong><span>Walk the compound with no guards</span></button>
           <button class="main-entry" data-menu-go="lab"><strong>Animation lab</strong><span>Characters, moves and weapons</span></button>
+          <button class="main-entry" data-menu-open="dev"><strong>Dev mode</strong><span>Test rooms for working on the game</span></button>
+        </nav>
+      </section>
+      <section data-menu-page="dev" hidden>
+        ${back}
+        <h2 id="dev-page-title">Dev mode</h2>
+        <p>Rooms for finding and fixing problems. Nothing here is saved.</p>
+        <nav class="main-menu" aria-label="Dev mode">
+          <button class="main-entry" data-menu-go="level:light-room"><strong>Light room</strong><span>Four lights to switch, things to light: 7 8 9 0, and − for markers</span></button>
+          <button class="main-entry" data-menu-go="level:proving-ground"><strong>Proving ground</strong><span>The template level, with guards and goals</span></button>
         </nav>
       </section>
       <section data-menu-page="options" hidden>
@@ -217,21 +230,23 @@ export class MissionMenu {
             <p class="briefing-premise" id="briefing-premise">${escapeText(briefing.premise)}</p>
           </header>
         </div>
-        <div class="briefing-map">
-          <div class="field-map">${briefing.map}</div>
-          <p class="map-legend">${(briefing.legend ?? ['▲ You']).map(entry => `<span>${escapeText(entry)}</span>`).join('')}</p>
+        <div class="briefing-grid">
+          <div class="briefing-map">
+            <div class="field-map">${briefing.map}</div>
+            <p class="map-legend">${(briefing.legend ?? ['▲ You']).map(entry => `<span>${escapeText(entry)}</span>`).join('')}</p>
+          </div>
+          <div class="briefing-body">
+            <p id="mission-current-objective" hidden></p>
+            <section class="briefing-objectives" aria-labelledby="briefing-objectives-title">
+              <h3 id="briefing-objectives-title">Objectives</h3>
+              <ol class="briefing-main"></ol>
+              <h3 class="briefing-side-title">Optional</h3>
+              <ul class="briefing-side"></ul>
+            </section>
+            <div class="mission-actions briefing-actions"><button id="briefing-start" class="menu-primary">Start mission</button></div>
+          </div>
         </div>
-        <p id="mission-current-objective" hidden></p>
-        <div class="briefing-body">
-          <section class="briefing-objectives" aria-labelledby="briefing-objectives-title">
-            <h3 id="briefing-objectives-title">Objectives</h3>
-            <ol class="briefing-main"></ol>
-            <h3 class="briefing-side-title">Optional</h3>
-            <ul class="briefing-side"></ul>
-          </section>
-          ${briefing.tips.length ? `<section class="briefing-intel" aria-labelledby="briefing-intel-title"><h3 id="briefing-intel-title">Intel</h3>${briefing.tips.map(tip => `<p>${escapeText(tip)}</p>`).join('')}</section>` : ''}
-        </div>
-        <div class="mission-actions briefing-actions"><button id="briefing-start" class="menu-primary">Start mission</button></div>
+        ${briefing.tips.length ? `<section class="briefing-intel" aria-labelledby="briefing-intel-title"><h3 id="briefing-intel-title">Intel</h3><div class="briefing-tips">${briefing.tips.map(tip => `<p>${escapeText(tip)}</p>`).join('')}</div></section>` : ''}
       </section>
       <section data-menu-page="controls" hidden>
         ${back}
@@ -241,7 +256,7 @@ export class MissionMenu {
           <div><dt>Look</dt><dd><kbd>Mouse</kbd></dd></div>
           <div><dt>Fire · knife slash</dt><dd><kbd>Left click</kbd></dd></div>
           <div><dt>Aim (hold) · knife stab</dt><dd><kbd>Right click</kbd></dd></div>
-          <div><dt>Interact / pick up</dt><dd><kbd>F</kbd></dd></div>
+          <div><dt>Interact · inspect weapon</dt><dd><kbd>F</kbd></dd></div>
           <div><dt>Reload</dt><dd><kbd>R</kbd></dd></div>
           <div><dt>Sprint</dt><dd><kbd>Shift</kbd></dd></div>
           <div><dt>Crouch (toggle)</dt><dd><kbd>C</kbd></dd></div>

@@ -316,3 +316,65 @@ console.log('PASS Shadows cost nothing in a still room; a moving door redraws on
   assert('NEON_UNLIT' in (material.defines ?? {}), 'Window glass ignores the dark: from inside it reads as white daylight')
 }
 console.log('PASS Far lights keep glowing and blending from further away, each kept to its own rooms; windows stay white from inside')
+
+{
+  // Choosing the shadowed lights is steady and puts the room you are in first.
+  // Two dark rooms side by side, each with lamps along it; more lamps than slots.
+  const world = new THREE.Scene()
+  const lamp = (name: string, x: number, z: number) => {
+    const light = new THREE.Object3D()
+    light.name = name; light.position.set(x, 2.5, z); light.rotation.x = Math.PI / 2
+    light.userData.neonLight = { start: [-0.02, 0, 0], end: [0.02, 0, 0], color: 0xffb24a, intensity: 6, range: 8, standoff: 0.5 }
+    world.add(light)
+    return light
+  }
+  const room = (name: string, x: number) => {
+    const box = new THREE.Object3D()
+    box.name = name; box.position.set(x, 1.5, 0); box.userData.darkRoom = { half: [5, 1.5, 3] }
+    world.add(box)
+  }
+  room('west room', -5); room('east room', 5)
+  for (let i = 0; i < 7; i++) { lamp(`west lamp ${i}`, -9 + i * 1.3, 0); lamp(`east lamp ${i}`, 1 + i * 1.3, 0) }
+  world.updateMatrixWorld(true)
+  const lit = new NeonLights(world)
+  const active = () => new Set(lit.active.map(sign => sign.name))
+  // Standing in the west room, its own seven lamps all have slots, though some east lamps are nearer than some west ones.
+  for (let t = 0; t < 1; t += 0.02) lit.update(renderer, new THREE.Vector3(-1.2, 1.6, 0), 300 + t)
+  const west = [...active()].filter(name => name.startsWith('west')).length
+  assert.equal(west, 7, `The room you are in comes first: ${west} of its 7 lamps are lit with shadows`)
+  // Pacing a metre back and forth across the doorway between them swaps no lights.
+  let before = active(), swaps = 0
+  for (let step = 0; step < 120; step++) {
+    const x = -0.6 + 1.2 * Math.abs(Math.sin(step * 0.15))
+    lit.update(renderer, new THREE.Vector3(Math.min(x, -0.05), 1.6, 0), 301 + step / 60)
+    const now = active()
+    for (const name of now) if (!before.has(name)) swaps++
+    before = now
+  }
+  assert.equal(swaps, 0, `Pacing at the edge of the choice swaps no lights (${swaps} swaps)`)
+  // Once the fades and shadows are done, the lighting stops asking for frames.
+  for (let t = 0; t < 1; t += 0.02) lit.update(renderer, new THREE.Vector3(-0.3, 1.6, 0), 304 + t)
+  assert(!lit.busy, 'A settled scene needs no more frames')
+  // Walking into the east room brings its lamps in: the lighting asks for frames while they fade up, then settles.
+  lit.update(renderer, new THREE.Vector3(6, 1.6, 0), 306)
+  assert(lit.busy, 'A light fading up asks for frames')
+  for (let t = 0.02; t < 1; t += 0.02) lit.update(renderer, new THREE.Vector3(6, 1.6, 0), 306 + t)
+  assert.equal([...active()].filter(name => name.startsWith('east')).length, 7, 'In the east room its own lamps take over')
+  assert(!lit.busy, 'and the lighting settles again')
+}
+console.log('PASS The shadowed lights are chosen steadily, the room you are in first, and the lighting asks for frames only while it settles')
+
+{
+  // A change of lights re-sorts the last search for shadow casters instead of walking the whole scene again.
+  const lit = new NeonLights(scene) as unknown as { update: NeonLights['update']; findCandidates(): void }
+  let searches = 0
+  const find = lit.findCandidates.bind(lit)
+  lit.findCandidates = () => { searches++; find() }
+  const route = [new THREE.Vector3(-34, 1.6, -38), new THREE.Vector3(-20, 1.6, -40), new THREE.Vector3(0, 1.6, -40), new THREE.Vector3(20, 1.6, -30)]
+  for (let i = 0; i < 120; i++) {
+    const at = route[Math.floor(i / 40)].clone().lerp(route[Math.floor(i / 40) + 1], (i % 40) / 40)
+    lit.update(renderer, at, 400 + i / 60)
+  }
+  assert(searches <= 1, `Walking across the yard for two seconds searches the scene for casters once, not on every change of lights (${searches})`)
+}
+console.log('PASS Shadow casters are searched for every few seconds, not on every change of lights')

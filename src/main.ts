@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { warmUp } from './render/warm-up'
 import { EnvironmentCamera, type ViewName } from './camera'
-import { levelOf, onModeSwitch, playsLevel, startMode, type Mode } from './modes'
+import { levelOf, onModeSwitch, playsLevel, startMode, viewOf, type Mode } from './modes'
 import { palette, resizeInk } from './render/ink'
 import { EnvironmentInteractions } from './interactions'
 import { FirstPersonController } from './player/controller'
@@ -11,6 +11,8 @@ import { MissionRuntime } from './game/runtime'
 import { BuildingLabels } from './world/labels'
 import { NeonLights } from './render/neon'
 import { addExitSigns } from './world/exitSigns'
+import { placeWindowShadows } from './world/lights'
+import { startLightLab } from './game/light-lab'
 import './style.css'
 import './game/theme-k7.css'
 
@@ -38,6 +40,8 @@ renderer.shadowMap.enabled = false
 type Session = {
   mode: Mode; scene: THREE.Scene; camera: EnvironmentCamera; interactions: EnvironmentInteractions; player: FirstPersonController
   vr: VRWalkthrough; mission: MissionRuntime | null; buildingLabels: BuildingLabels; neonLights: NeonLights; startupReady: boolean
+  /** The light room's tools, taken away with the session. */
+  lab?: () => void
 }
 const viewer = new THREE.Vector3()
 
@@ -53,14 +57,17 @@ function boot(mode: Mode): Session {
   addExitSigns(scene)
   // Name tags over each building for the map views; CSS hides them while walking.
   const buildingLabels = new BuildingLabels(scene)
-  // Neon signs are the only real lights; they shade everything around them.
-  const neonLights = new NeonLights(scene)
   const camera = new EnvironmentCamera(canvas, invalidate)
   const interactions = new EnvironmentInteractions(canvas, scene, () => camera.active, invalidate, () => camera.walking)
   const player = new FirstPersonController(canvas, scene, camera, interactions, invalidate)
+  // With the world built and furnished, each window's shadows are seen from where they can see all its glass.
+  placeWindowShadows(scene, (from, to) => { const d = from.distanceTo(to); return d < 0.01 || player.world.rayDistance(from, to.clone().sub(from).normalize(), d) >= d - 0.02 })
+  // Neon signs, lamps, windows and doorways are the only real lights; they shade everything around them.
+  const neonLights = new NeonLights(scene)
   const vr = new VRWalkthrough(renderer, scene, camera, player, invalidate)
   const mission = missionWorld ? new MissionRuntime(scene, camera, player, missionWorld, invalidate) : null
-  const session: Session = { mode, scene, camera, interactions, player, vr, mission, buildingLabels, neonLights, startupReady: !mission }
+  const session: Session = { mode, scene, camera, interactions, player, vr, mission, buildingLabels, neonLights, startupReady: !mission,
+    lab: level === 'light-room' ? startLightLab(scene, neonLights, invalidate) : undefined }
   // Initialization positions the mission camera and settles the menu (including
   // load errors). Reveal only after that state has actually been rendered.
   void mission?.initialized.then(() => {
@@ -70,7 +77,9 @@ function boot(mode: Mode): Session {
     invalidate()
   })
   if (mode === 'load') void mission?.initialized.then(() => mission.showLoad())
-  const view = mode.startsWith('view:') ? mode.slice(5) as ViewName : null
+  // The overview and the plan show the whole level.
+  if (missionWorld) camera.frameLevel(missionWorld.bounds)
+  const view = viewOf(mode)
   if (view) {
     camera.setView(view)
     // The mission's player shares the perspective camera and is placed at the insertion once loaded; restore the view after that.
@@ -81,7 +90,8 @@ function boot(mode: Mode): Session {
   return session
 }
 
-function disposeSession({ scene, vr, buildingLabels, mission, player, camera, interactions }: Session) {
+function disposeSession({ scene, vr, buildingLabels, mission, player, camera, interactions, lab }: Session) {
+  lab?.()
   vr.dispose()
   buildingLabels.dispose()
   mission?.dispose()
@@ -180,7 +190,8 @@ function render(now: number, xrFrame?: XRFrame) {
       document.querySelector<HTMLButtonElement>('#walk-start:not(:disabled)')?.focus({ preventScroll: true })
     }
   }
-  if (moving || doorsMoving || missionMoving) invalidate()
+  // The lighting asks for frames while a light fades up or its shadows are drawn, even with nothing else moving.
+  if (moving || doorsMoving || missionMoving || neonLights.busy) invalidate()
   rendering = false
 }
 

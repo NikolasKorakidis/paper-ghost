@@ -40,6 +40,7 @@ npm run test:<area>  # focused suite, see table
 - `src/world/`: compound geometry built in code from plan coordinates (0.15 m per reference pixel, north = −Z).
 - `src/player/`: capsule controller, collision trees, ladders. Physics substeps are ≤ 1/120 s.
 - `src/render/ink.ts`: the shared paper/ink materials. Use these; don't create ad-hoc materials.
+- `src/render/neon.ts` is the lighting (lamps, windows, doorways, signs, screens; shadows; dark rooms) and `src/world/lights.ts` its builders. A light must not run through a wall or furniture, and a window row must stay in one room; `placeWindowShadows` picks each window's shadow point once the world is built, and `scripts/light-placement-checks.ts` enforces all of this. Gallery → Dev mode → Light room (`/?level=light-room`) is the test room: 7 8 9 0 switch its lights, − shows each light's line and shadow point.
 - `public/`: `models/stickman.glb` (the one skinned character), `OST/` (every sound and music track, by category: see `public/OST/README.md` and `CREDITS.md`).
 - `scripts/*-checks.ts`: Node logic checks. `scripts/check-*.js`, `capture-*.js`, route scripts: browser checks (see below). `scripts/agent-browser.mjs` provides the portable browser CLI launcher used by runtime checks.
 - `localonly/` and `artifacts/` are git-ignored scratch space. Put screenshots and evidence there, never in the repo.

@@ -4,7 +4,7 @@ import { Capsule } from 'three/addons/math/Capsule.js'
 import { EnemyActor, type ActorPostureSnapshot } from './actors'
 import type { Posture } from '../lab/postures'
 import { EnemyNavigation } from './navigation'
-import { AMMO, BOSS_RULES, CRITICAL_HITS, ENEMY_HEALTH, ENEMY_RUN_SPEED, ENEMY_WEAPONS as WEAPON, ENEMY_COMBAT as COMBAT, DETECTION, GRENADE_RULES, HEAD_BURST_CHANCE, WEAPON_RULES, criticalChance, flashStrength, fragDamage, hitDamage, shotgunDamageMultiplier } from './balance'
+import { AMMO, BOSS_RULES, CRITICAL_HITS, GUNSHOT_HEARING, ENEMY_HEALTH, ENEMY_RUN_SPEED, ENEMY_WEAPONS as WEAPON, ENEMY_COMBAT as COMBAT, DETECTION, GRENADE_RULES, HEAD_BURST_CHANCE, WEAPON_RULES, criticalChance, flashStrength, fragDamage, hitDamage, shotgunDamageMultiplier } from './balance'
 import { rayCapsuleDistance, reactionClipName, type HitReaction, type HitZone } from './hit-reactions'
 import { playerHitTarget, type PlayerBulletHit } from './player-hit-reactions'
 import type { AIContext, EnemyPuppet, EnemyReaction, EnemySnapshot, EnemySpec, EnemyState, PlayerSense, Shot, SoundEvent, Vec3, WeaponName } from './types'
@@ -31,9 +31,13 @@ export function insideVisionCone(from: THREE.Vector3, yaw: number, target: THREE
     (distance < 0.1 || (Math.sin(yaw) * dx + Math.cos(yaw) * dz) / distance >= Math.cos(halfAngle * Math.PI / 180))
 }
 
-export function audible(distance: number, radius: number, unobstructed: boolean) {
-  return distance <= radius * (unobstructed ? 1 : 0.42)
+/** Heard at `distance` from a sound carrying `radius` m in the open: through walls only `muffled` as far. */
+export function audible(distance: number, radius: number, unobstructed: boolean, muffled = 0.42) {
+  return distance <= radius * (unobstructed ? 1 : muffled)
 }
+
+/** What a search is about: a noise, a contact lost, or a body found (DETECTION.search). */
+export type SearchKind = keyof typeof DETECTION.search
 
 /** Nearest positive ray hit on a world-upright enemy capsule; independent of animation triangle count. */
 export function rayBodyDistance(origin: THREE.Vector3, rayDirection: THREE.Vector3, feet: THREE.Vector3) {
@@ -142,6 +146,12 @@ export type Enemy = {
   blind: number
   /** Co-op: the player this guard is engaging; undefined in solo play. */
   targetId?: number
+  /** Seconds left of caution (DETECTION.caution): jumpy after a body, a gunshot or losing you; his ? fills faster. */
+  caution: number
+  /** Which way you were moving when he last saw you (flat, unit length), or null if you were standing still. */
+  lastHeading: THREE.Vector3 | null
+  /** What his current or next search is about. */
+  searchKind: SearchKind
 }
 
 const tuple = (point: THREE.Vector3): Vec3 => [point.x, point.y, point.z]
@@ -149,7 +159,7 @@ const vector = (value: unknown) => Array.isArray(value) && value.length === 3 &&
 const number = (value: unknown, fallback = 0) => typeof value === 'number' && Number.isFinite(value) ? value : fallback
 const NUMBERS = ['repath', 'stuck', 'senseTimer', 'lostFor', 'shotTimer', 'shots', 'magazine', 'reserve', 'reloadTimer', 'calloutTimer', 'communicationTimer', 'wait',
   'patrolStop', 'visitedWaypoints', 'distanceWalked', 'footstepDistance', 'pathFailures', 'tacticTimer', 'burst', 'aimTime', 'blockedFor', 'contactMemory', 'notice', 'provoked', 'suppress', 'settledFor', 'hitPause', 'moveSpeed', 'searchIndex',
-  'scanTimer', 'scanDuration', 'scanCooldown', 'scanYaw', 'defensiveTimer', 'armor', 'respawnTimer', 'blind'] as const
+  'scanTimer', 'scanDuration', 'scanCooldown', 'scanYaw', 'defensiveTimer', 'armor', 'respawnTimer', 'blind', 'caution'] as const
 
 export class EnemyDirector {
   readonly enemies: Enemy[] = []
@@ -196,6 +206,7 @@ export class EnemyDirector {
         tactic: 'hold', tacticTimer: 0, tacticPoint: null, burst: 0, aimTime: 0, blockedFor: 0, contactMemory: 0, notice: 0, provoked: 0, squad: -1, flanked: false, suppress: 0, settledFor: 0, hitPause: 0, moveSpeed: 0,
         searchPoints: [], searchIndex: 0, woundArm: false, woundLeg: false, deathClip: 'dieBody', headless: false, speaker: i % 4, noticedBodies: [],
         scanTimer: 0, scanDuration: 0, scanCooldown: 0, scanYaw: 0, defensiveTimer: 0, blind: 0,
+        caution: 0, lastHeading: null, searchKind: 'noise',
       }
       if (spec.boss) actor.makeBoss?.()
       // Training targets carry no weapon to drop.
@@ -256,7 +267,11 @@ export class EnemyDirector {
       this.say(enemy, 'Contact! Open fire!', 'contact', enemy.communicationTimer <= 0); this.communicate(enemy); enemy.aimTime = 0
       this.alertSquad(enemy)
     }
-    if (state === 'investigate' && previous === 'combat') { enemy.suppress = 1.4; this.say(enemy, 'Lost him! Where did he go?', 'lost', true) }
+    if (state === 'investigate' && previous === 'combat') {
+      enemy.suppress = 1.4; this.say(enemy, 'Lost him! Where did he go?', 'lost', true)
+      // He goes to where he last saw you, then searches round it, first where you were heading; and stays jumpy.
+      enemy.searchKind = 'lost'; enemy.caution = Math.max(enemy.caution, DETECTION.caution.lost)
+    }
     if (state === 'search') { this.say(enemy, 'Come out! Check the corners.', 'search'); if (enemy.spec.role !== 'sniper') this.planSearch(enemy) }
     if (state === 'patrol' || state === 'guard') {
       enemy.notice = 0
@@ -280,8 +295,24 @@ export class EnemyDirector {
       ally.lastKnown = source.lastKnown.clone()
       ally.suspicion = Math.max(ally.suspicion, 0.4)
       ally.lostFor = 0
+      ally.searchKind = source.searchKind; ally.lastHeading = source.lastHeading?.clone() ?? null
+      ally.caution = Math.max(ally.caution, source.caution * 0.8)
       this.enter(ally, 'investigate')
     }
+  }
+
+  /**
+   * How quickly his ? fills against you where you are in his view: full speed straight ahead and close, slower at the
+   * edge of his view and at the end of his sight, faster while he is cautious. (Stance is separate: noticeRate.)
+   */
+  private awareness(enemy: Enemy, player: PlayerSense) {
+    const dx = player.eye.x - enemy.position.x, dz = player.eye.z - enemy.position.z, distance = Math.hypot(dx, dz)
+    const { peripheral, distance: falloff, fov, caution } = DETECTION
+    const angle = distance < 0.1 ? 0 : Math.acos(clamp((Math.sin(enemy.yaw) * dx + Math.cos(enemy.yaw) * dz) / distance, -1, 1)) * 180 / Math.PI
+    const side = angle <= peripheral.full ? 1 : THREE.MathUtils.lerp(1, peripheral.edge, clamp((angle - peripheral.full) / (fov / 2 - peripheral.full), 0, 1))
+    const range = this.sightRange(enemy, false)
+    const far = distance <= falloff.near ? 1 : THREE.MathUtils.lerp(1, falloff.far, clamp((distance - falloff.near) / Math.max(1, range - falloff.near), 0, 1))
+    return side * far * (enemy.caution > 0 ? caution.rate : 1)
   }
 
   /** How far he sees you: calm, or `engaged` once he has had you in view (a sniper keeps tracking a little further). */
@@ -396,7 +427,7 @@ export class EnemyDirector {
     if (!player.alive || enemy.blind > 0) return false
     const origin = this.eye(enemy)
     const range = this.sightRange(enemy, enemy.contactMemory > 0 || enemy.state === 'combat')
-    if (!insideVisionCone(origin, enemy.yaw, player.eye, range, enemy.state === 'combat' ? 70 : 55)) return false
+    if (!insideVisionCone(origin, enemy.yaw, player.eye, range, (enemy.state === 'combat' ? DETECTION.fovCombat : DETECTION.fov) / 2)) return false
     const body = player.feet.clone().add(new THREE.Vector3(0, Math.min(0.95, bodyHeight(player) * 0.58), 0))
     return [player.eye, body].some(point => this.context.world.visible(origin, point, ignore) && !this.obscured?.(origin, point))
   }
@@ -537,20 +568,35 @@ export class EnemyDirector {
     return protectedArea || this.context.world.rayDistance(enemy.position.clone().add(eyeOffset), new THREE.Vector3(0, 1, 0), 16) < 16
   }
 
+  /**
+   * A body on the ground, seen from DETECTION.bodySight off by any guard not already fighting: "Man down!" He radios it,
+   * runs to the body, and then searches the ground round it (a body search, DETECTION.search.body), hiding places
+   * first; his squad joins in, each from his own side. All of them stay cautious for a good while.
+   */
   private noticeBody(enemy: Enemy) {
-    if (enemy.state !== 'patrol' && enemy.state !== 'guard') return
+    if (!['patrol', 'guard', 'suspicious', 'investigate', 'search'].includes(enemy.state)) return
     const eye = this.eye(enemy)
     for (const body of this.enemies) {
-      if (body.state !== 'dead' || enemy.noticedBodies.includes(body.spec.id)) continue
+      if (body.state !== 'dead' || body.spec.dummy || enemy.noticedBodies.includes(body.spec.id)) continue
       const point = body.position.clone().add(new THREE.Vector3(0, 0.3, 0))
-      if (!insideVisionCone(eye, enemy.yaw, point, 12) || !this.context.world.visible(eye, point, ignore)) continue
+      if (!insideVisionCone(eye, enemy.yaw, point, DETECTION.bodySight, DETECTION.fov / 2) || !this.context.world.visible(eye, point, ignore)) continue
       enemy.noticedBodies.push(body.spec.id)
       enemy.lastKnown = body.position.clone()
-      enemy.suspicion = Math.max(enemy.suspicion, 0.5)
+      enemy.suspicion = Math.max(enemy.suspicion, 0.6)
       enemy.lostFor = 0
+      enemy.searchKind = 'body'; enemy.lastHeading = null
+      enemy.caution = Math.max(enemy.caution, DETECTION.caution.body)
       this.enter(enemy, 'investigate')
-      this.say(enemy, 'Guard down! Check the area.', 'search')
+      this.say(enemy, 'Man down! Search the area!', 'search', true)
       this.communicate(enemy)
+      for (const ally of this.squadmates(enemy)) {
+        if (ally.state === 'combat' || ally.noticedBodies.includes(body.spec.id)) continue
+        ally.noticedBodies.push(body.spec.id)
+        ally.lastKnown = body.position.clone(); ally.lostFor = 0
+        ally.searchKind = 'body'; ally.suspicion = Math.max(ally.suspicion, 0.6)
+        ally.caution = Math.max(ally.caution, DETECTION.caution.body)
+        this.enter(ally, 'investigate')
+      }
       break
     }
   }
@@ -608,6 +654,7 @@ export class EnemyDirector {
       enemy.repath -= dt
       enemy.contactMemory = Math.max(0, enemy.contactMemory - dt)
       enemy.provoked = Math.max(0, enemy.provoked - dt)
+      enemy.caution = Math.max(0, enemy.caution - dt)
       enemy.shotTimer = Math.max(0, enemy.shotTimer - dt)
       enemy.calloutTimer -= dt
       enemy.communicationTimer -= dt
@@ -632,7 +679,13 @@ export class EnemyDirector {
         const seen = this.sight(enemy)
         enemy.canSee = !!seen
         // Only an actual sight query supplies a position; cached visibility never tracks a hidden player.
-        if (seen) { player = seen; enemy.targetId = seen.id; enemy.lastKnown = seen.feet.clone(); enemy.contactMemory = COMBAT.contactMemory }
+        if (seen) {
+          player = seen; enemy.targetId = seen.id; enemy.lastKnown = seen.feet.clone(); enemy.contactMemory = COMBAT.contactMemory
+          // Which way you were going, for the search if he loses you.
+          const flat = Math.hypot(seen.velocity.x, seen.velocity.z)
+          if (flat > 0.6) (enemy.lastHeading ??= new THREE.Vector3()).set(seen.velocity.x / flat, 0, seen.velocity.z / flat)
+          else enemy.lastHeading = null
+        }
         else this.noticeBody(enemy)
         // In a fight, whoever sees you tells his squad where you are: those who can't see you keep coming.
         if (seen && enemy.state === 'combat') for (const ally of this.squadmates(enemy)) {
@@ -654,7 +707,7 @@ export class EnemyDirector {
         // Hunting you already, he reacts at the ordinary speed of a first sighting.
         let quick = close
         if (enemy.state !== 'combat' && (close || hunting)) enemy.notice = DETECTION.notice
-        else if (enemy.state !== 'combat') { enemy.notice = Math.min(DETECTION.notice, enemy.notice + dt * noticeRate(player)); quick ||= enemy.notice >= DETECTION.notice }
+        else if (enemy.state !== 'combat') { enemy.notice = Math.min(DETECTION.notice, enemy.notice + dt * noticeRate(player) * this.awareness(enemy, player)); quick ||= enemy.notice >= DETECTION.notice }
         if (enemy.state === 'combat' || enemy.notice >= DETECTION.notice) {
           enemy.suspicion = 1
           if (enemy.state !== 'combat') {
@@ -690,7 +743,9 @@ export class EnemyDirector {
           const progress = 1 - enemy.scanTimer / enemy.scanDuration
           const yaw = enemy.scanYaw + Math.sin(progress * Math.PI * 2) * 0.7
           this.face(enemy, point.set(enemy.position.x + Math.sin(yaw), enemy.position.y, enemy.position.z + Math.cos(yaw)), dt, 2.8)
-        } else if (enemy.scanTimer <= 0 && enemy.lastKnown) this.face(enemy, enemy.lastKnown, dt, 5)
+        // "What was that?": a glimpse does not turn his head at once. Only once the ? is a third full does he turn to it
+        // (steadily, not in a snap), so a glimpse at the edge of his view, where the ? fills slowly, buys you time.
+        } else if (enemy.scanTimer <= 0 && enemy.lastKnown && (enemy.notice >= DETECTION.notice * 0.3 || enemy.provoked > 0)) this.face(enemy, enemy.lastKnown, dt, 2.5)
       } else if (enemy.state === 'investigate') {
         if (enemy.spec.role === 'sniper') {
           if (enemy.lastKnown) this.face(enemy, enemy.lastKnown, dt, 2.2)
@@ -1056,37 +1111,58 @@ export class EnemyDirector {
 
   // ---------------------------------------------------------------- search
 
-  /** Up to three walkable points around the last contact, corners first; allies start from different angles. */
+  /**
+   * The places he checks round the centre of his search (the body, the sound, where he lost you), by what it is about
+   * (DETECTION.search): hiding places he cannot see into first, then the rest; a lost contact first where you were
+   * heading. Allies searching the same ground take different places.
+   */
   private planSearch(enemy: Enemy) {
     enemy.searchPoints = []
     enemy.searchIndex = 0
     enemy.wait = 0
+    const plan = DETECTION.search[enemy.searchKind]
     const center = enemy.lastKnown ?? enemy.position
     const origin = enemy.position.clone().add(eyeOffset)
+    const taken = (point: THREE.Vector3) => this.enemies.some(ally => ally !== enemy && ally.state === 'search' &&
+      ally.searchPoints.slice(ally.searchIndex).some(assigned => assigned.distanceTo(point) < 2.5))
+    const usable = (point: THREE.Vector3 | null): point is THREE.Vector3 => !!point && this.availablePosition(enemy, point) && !taken(point)
+    const ahead: THREE.Vector3[] = []
+    // Lost you while you were on the move: first where you were going.
+    if (enemy.searchKind === 'lost' && enemy.lastHeading) {
+      for (const along of [6, 4, 8]) {
+        const point = this.navigation.floor(center.clone().addScaledVector(enemy.lastHeading, along))
+        if (usable(point)) { ahead.push(point); break }
+      }
+    }
     const start = this.enemies.indexOf(enemy) * 1.2 + this.random(enemy) * 0.6
     const hidden: THREE.Vector3[] = [], open: THREE.Vector3[] = []
-    for (let i = 0; i < 6; i++) {
-      const angle = start + i * 1.047, radius = 2.5 + this.random(enemy) * 2.5
+    const [near, far] = plan.reach
+    for (let i = 0; i < 10; i++) {
+      const angle = start + i * 0.628, radius = near + this.random(enemy) * (far - near)
       const point = this.navigation.floor(new THREE.Vector3(center.x + Math.sin(angle) * radius, center.y, center.z + Math.cos(angle) * radius))
-      if (!point || !this.availablePosition(enemy, point) || this.enemies.some(ally => ally !== enemy && ally.state === 'search' &&
-        ally.searchPoints.slice(ally.searchIndex).some(assigned => assigned.distanceTo(point) < 2))) continue
+      if (!usable(point) || [...ahead, ...hidden, ...open].some(other => other.distanceTo(point) < 2)) continue
       ;(this.context.world.visible(origin, point.clone().add(eyeOffset), ignore) ? open : hidden).push(point)
     }
-    enemy.searchPoints = [...hidden, ...open].slice(0, 3)
+    enemy.searchPoints = [...ahead, ...hidden, ...open].slice(0, plan.points)
   }
 
+  /**
+   * Searching: to each place in turn, at a careful walk (a quick one while still hunting you), and at each one a long
+   * look round; back to his post once he has seen them all or his time (by what the search is about) runs out.
+   */
   private search(enemy: Enemy, dt: number) {
+    const plan = DETECTION.search[enemy.searchKind]
     const target = enemy.searchPoints[enemy.searchIndex]
     let moving = false
-    if (target && enemy.timer < 9) {
-      if (enemy.wait > 0) { enemy.wait -= dt; enemy.yaw += Math.sin(enemy.timer * 2.2) * dt * 1.4 }
-      else if (enemy.position.distanceTo(target) < 0.7) { enemy.searchIndex++; enemy.wait = 1.2 + this.random(enemy) * 0.8; enemy.path = []; enemy.pathTarget = null }
-      else moving = this.move(enemy, target, this.speed(enemy, 1.4), dt)
+    if (target && enemy.timer < plan.time) {
+      if (enemy.wait > 0) { enemy.wait -= dt; enemy.yaw += Math.sin(enemy.timer * 1.6) * dt * 1.6 }
+      else if (enemy.position.distanceTo(target) < 0.7) { enemy.searchIndex++; enemy.wait = 1.6 + this.random(enemy) * 1.2; enemy.path = []; enemy.pathTarget = null }
+      else moving = this.move(enemy, target, this.speed(enemy, enemy.suspicion >= 0.5 ? 2.2 : 1.4), dt)
       return moving
     }
     if (!target) enemy.yaw += dt * 0.65
-    if (enemy.timer > 9 || (!target && enemy.timer > 3)) {
-      this.say(enemy, 'All clear. Back to post.', 'clear')
+    if (enemy.timer > plan.time || (!target && enemy.timer > 3)) {
+      this.say(enemy, enemy.searchKind === 'body' ? 'Nothing. Stay sharp, he\'s still out there.' : 'All clear. Back to post.', 'clear')
       this.enter(enemy, enemy.post ? 'guard' : enemy.spec.patrol.length > 1 ? 'patrol' : 'guard')
     }
     return moving
@@ -1314,7 +1390,10 @@ export class EnemyDirector {
   }
 
   hear(event: SoundEvent) {
-    if (!event.position || !event.radius || event.kind.startsWith('enemy-') || ['callout', 'ambience', 'door'].includes(event.kind)) return
+    if (!event.position || !event.radius || ['callout', 'ambience', 'door'].includes(event.kind)) return
+    // A comrade firing: guards within earshot (and not in the fight already) come to back him up.
+    if (event.kind.startsWith('enemy-shot')) { this.hearGunfire(event); return }
+    if (event.kind.startsWith('enemy-')) return
     // The suppressed pistol has no flash and a report only the shooter hears: no guard reacts to the shot itself.
     if (event.kind === 'shot-silenced') return
     for (const enemy of this.enemies) {
@@ -1335,19 +1414,52 @@ export class EnemyDirector {
       }
       else if (enemy.scanTimer > 0) continue
       // Line of sight only decides the band between the muffled and the open radius; most guards are outside both.
+      // A gunshot is loud enough to carry well through walls (GUNSHOT_HEARING.muffled).
       const radius = event.radius * (enemy.spec.boss ? BOSS_RULES.hearing : 1)
-      if (!visibleShot && !audible(distance, radius, distance > radius * 0.42 && distance <= radius &&
-        this.context.world.visible(from, source, ignore))) continue
+      const muffled = shot ? GUNSHOT_HEARING.muffled : 0.42
+      if (!visibleShot && !audible(distance, radius, distance > radius * muffled && distance <= radius &&
+        this.context.world.visible(from, source, ignore), muffled)) continue
       enemy.lastKnown = event.position.clone()
       // Weapon events originate at eye/muzzle height; routes need the surface below that sound.
       const floor = this.context.world.floor(event.position, 0.38, 2.2, 0.1)
       enemy.lastKnown.y = Number.isFinite(floor) ? floor + 0.006 : enemy.position.y
       enemy.lostFor = 0
+      enemy.searchKind = 'noise'; enemy.lastHeading = null
       // Running feet are someone who shouldn't be there: he comes at them at a run (suspicion 0.5 and up), weapon up.
+      // A gunshot he only heard could be anything: he walks over to check (a sound never counts as a sighting), and
+      // stays cautious after.
       const running = event.kind === 'footstep'
       enemy.suspicion = Math.max(enemy.suspicion, running ? 0.7 : 0.25)
+      if (shot) enemy.caution = Math.max(enemy.caution, DETECTION.caution.gunshot)
+      else if (running) enemy.caution = Math.max(enemy.caution, DETECTION.caution.footsteps)
       this.enter(enemy, 'investigate')
-      this.say(enemy, shot ? 'Gunshot! Checking the sound.' : running ? 'Footsteps! Someone\'s running!' : 'Heard something. Have a look.', 'search')
+      this.say(enemy, shot ? 'Gunshot! Moving to check it.' : running ? 'Footsteps! Someone\'s running!' : 'Heard something. Have a look.', 'search')
+      // Shots are passed on by radio: the nearest of his comrades come too.
+      if (shot) this.communicate(enemy)
+    }
+  }
+
+  /**
+   * A guard firing (`event` at his muzzle): any guard within GUNSHOT_HEARING of it who is not already fighting comes at
+   * a run to back him up, to where the shots are, ready for a fight.
+   */
+  private hearGunfire(event: SoundEvent) {
+    if (event.kind.endsWith('silenced')) return
+    const reach = (GUNSHOT_HEARING as Record<string, number>)[event.kind.slice('enemy-shot-'.length)] ?? GUNSHOT_HEARING.ak
+    const source = event.position!.clone().add(new THREE.Vector3(0, 0.5, 0))
+    for (const enemy of this.enemies) {
+      if (['dead', 'reserve', 'combat'].includes(enemy.state) || enemy.spec.dummy || enemy.spec.role === 'sniper') continue
+      const from = this.eye(enemy), distance = from.distanceTo(source)
+      if (distance < 1 || !audible(distance, reach, this.context.world.visible(from, source, ignore), GUNSHOT_HEARING.muffled)) continue
+      const floor = this.context.world.floor(event.position!, 0.38, 2.2, 0.1)
+      enemy.lastKnown = event.position!.clone().setY(Number.isFinite(floor) ? floor + 0.006 : enemy.position.y)
+      enemy.lostFor = 0
+      enemy.searchKind = 'noise'; enemy.lastHeading = null
+      enemy.suspicion = Math.max(enemy.suspicion, 0.8)
+      enemy.caution = Math.max(enemy.caution, DETECTION.caution.gunshot)
+      if (enemy.state === 'investigate') continue
+      this.enter(enemy, 'investigate')
+      this.say(enemy, 'Shots fired! Moving to support!', 'search')
     }
   }
 
@@ -1700,6 +1812,7 @@ export class EnemyDirector {
       canSee: enemy.canSee, tactic: enemy.tactic, tacticPoint: enemy.tacticPoint ? tuple(enemy.tacticPoint) : null,
       searchPoints: enemy.searchPoints.map(tuple), woundArm: enemy.woundArm, woundLeg: enemy.woundLeg, deathClip: enemy.deathClip,
       headless: enemy.headless, noticedBodies: [...enemy.noticedBodies],
+      lastHeading: enemy.lastHeading ? tuple(enemy.lastHeading) : null, searchKind: enemy.searchKind,
       actorPosture: enemy.actor.postureSnapshot?.(),
       animationTime: enemy.actor.animationTime, elapsed: this.elapsed, reserveDestination: this.reserveDestination ? tuple(this.reserveDestination) : null,
     }))
@@ -1735,6 +1848,8 @@ export class EnemyDirector {
       enemy.tacticPoint = vector(saved.tacticPoint)
       enemy.searchPoints = Array.isArray(saved.searchPoints) ? saved.searchPoints.map(vector).filter((point): point is THREE.Vector3 => !!point) : []
       enemy.noticedBodies = Array.isArray(saved.noticedBodies) ? saved.noticedBodies.filter((id): id is string => typeof id === 'string') : []
+      enemy.lastHeading = vector(saved.lastHeading)
+      enemy.searchKind = typeof saved.searchKind === 'string' && saved.searchKind in DETECTION.search ? saved.searchKind as SearchKind : 'noise'
       enemy.woundArm = !!saved.woundArm; enemy.woundLeg = !!saved.woundLeg
       enemy.deathClip = typeof saved.deathClip === 'string' ? saved.deathClip : 'dieBody'
       enemy.actor.root.position.copy(enemy.position)
