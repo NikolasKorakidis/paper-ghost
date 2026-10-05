@@ -158,7 +158,7 @@ export function createTrainingGround() {
   const smg = new THREE.Object3D()
   smg.name = 'Armory table · smg'
   smg.position.set(1.85, 0.94, -37)
-  smg.userData.weaponSpot = { id: 'armory-smg', name: 'smg', magazine: 24, reserve: 72 }
+  smg.userData.weaponSpot = { id: 'armory-smg', name: 'smg', magazine: 24, reserve: 0 }
   root.add(smg)
 
   // Signs for each area.

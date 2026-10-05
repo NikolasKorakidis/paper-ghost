@@ -15,6 +15,18 @@ import { createMissionControl as control } from './mission-controls'
 import { cageLamp, darkRoom, daylightOpening, doorwayLight, LAMP_AMBER, windowRow } from '../world/lights'
 import { Furnishing } from '../world/interiors'
 import { compoundMap } from './compound-map'
+import { district } from './zones'
+
+/**
+ * The compound's districts (game/zones.ts): the yard where you come in (the mess hall, the sheds, the west wing and
+ * the inner gate), the warehouses and barracks in the middle, and the detention block with the hostages, the crew
+ * house and the security cabin in the east. Trouble in one puts the others on caution; nobody leaves his own.
+ */
+export const COMPOUND_DISTRICTS = [
+  district('yard', 'Yard', -110, 3, -78, 80),
+  district('warehouses', 'Warehouses', 3, 98, -78, 80),
+  district('detention', 'Detention', 98, 185, -78, 80),
+]
 
 const FLOOR = 0.12
 const DOOR_WIDTH = 2.1
@@ -527,7 +539,7 @@ export function createMissionWorld(compound?: THREE.Group): MissionWorld {
         [154, 0, -35], [146, 0, -37], [146, FLOOR, -42]], 'ak', true), alarmExit: [143, 0, -5] as Vec3 })),
   ]
   root.updateMatrixWorld(true)
-  return { level: 'compound', root, stations, enemies, spawn: [-40, 0.15, -62.3], lookAt: [-49, 1.7, -61], bounds,
+  return { level: 'compound', root, stations, enemies, spawn: [-40, 0.15, -62.3], lookAt: [-49, 1.7, -61], bounds, zones: COMPOUND_DISTRICTS,
     briefing: {
       title: 'The rescue', premise: 'Find the hostage. Get out together.', won: 'Hostage safe.', outro: 'You both made it out.',
       map: compoundMap(stations), legend: ['— Rail route', '┄ Service route', '▲ You'],

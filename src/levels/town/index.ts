@@ -13,6 +13,21 @@ import type { EnemySpec, MissionWorld, Station } from '../../game/types'
 import { ROADS, TOWN, onBridge, townHeight } from './plan'
 import { captiveChair } from '../../world/captive-chair'
 import { boulder, c4Cache, checkpoint, church, intelFolder, detentionShed, footbridge, fuelDepot, grainSilo, mapLines, marketSquare, signboard, stoneBridge, townHall, walledGraveyard, yardFence } from './buildings'
+import { district } from '../../game/zones'
+
+/**
+ * The town's districts (game/zones.ts): the north road with its checkpoint, bridge and silo; the church quarter with
+ * the graveyard and the fuel depot; the town centre round the town hall and the market; the farm (barn, orchard,
+ * water tower); and the hill with the school, the hotel and the manor. Trouble in one puts the others on caution;
+ * nobody leaves his own.
+ */
+export const TOWN_DISTRICTS = [
+  district('north-road', 'North road', -112, 22, -84, -28),
+  district('church', 'Church quarter', -112, -18, -28, 72),
+  district('centre', 'Town centre', -18, 22, -28, 72),
+  district('farm', 'Farm', 22, 112, -84, -8),
+  district('hill', 'Hotel hill', 22, 112, -8, 72),
+]
 
 /** Whether (x, z) is inside the perimeter fence's rounded rectangle, at least `margin` from it. */
 function insideFence(x: number, z: number, margin = 0) {
@@ -423,7 +438,7 @@ export function createTown(): { ground: THREE.Group; world: MissionWorld } {
       label: 'Get both prisoners out', detail: 'Lead them over the stone bridge and out through the checkpoint gate', done: 'They\'re out.' },
   ]
   const world: MissionWorld = {
-    level: 'town', root, stations, enemies, goals, spawn: TOWN.spawn, lookAt: TOWN.lookAt, bounds,
+    level: 'town', root, stations, enemies, goals, spawn: TOWN.spawn, lookAt: TOWN.lookAt, bounds, zones: TOWN_DISTRICTS,
     captives: [{ id: 'prisoner', name: 'The prisoner', position: prisoner, facing: shed.facing, station: 'prisoner' },
       { id: 'prisoner-2', name: 'The hotel prisoner', position: hotelPrisoner, facing: Math.PI / 2, station: 'prisoner-2' }], charges,
     briefing: {

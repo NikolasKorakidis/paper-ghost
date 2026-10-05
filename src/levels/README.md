@@ -40,7 +40,7 @@ The compound (`src/world/compound.ts` and `src/game/world.ts`) and the training 
 
 Marker conventions the game picks up anywhere in the scene:
 
-- `userData.weaponSpot = { id, name, magazine, reserve }` places a weapon pickup.
+- `userData.weaponSpot = { id, name, magazine }` places a weapon pickup. It always holds that one magazine and nothing more (`AMMO`).
 - `userData.questCrate` marks a breakable crate.
 - `userData.questItem = 'radio'` marks a radio.
 - `userData.kind = 'door'` marks a door.
@@ -59,6 +59,7 @@ Marker conventions the game picks up anywhere in the scene:
 | `goals` | The mission: see below. |
 | `captives` | Prisoners: `{ id, position, facing, station }`. The blue stickman sits tied to a chair (`captiveChair` in `world/captive-chair.ts`, at the same position and facing) until the station is used; then he stands and follows the nearest player, cowering in gunfire. Pair it with an `interact` goal on the same station. An `extract` goal with `captives: [ids]` is theirs to reach: it is done when every one of them is free and inside its area, and a captive who gets there stays. |
 | `charges` | Timed charges, CS-style C4: `{ id, name, pickup, plant, fuse, plantTime, blast, destroys, wreck }`. Taken at the `pickup` station, planted at `plant` by holding still, then a beeping countdown and a blast that kills within `blast.lethal`, hides `destroys` and shows `wreck`. `c4Package` in `game/charges.ts` is the model. |
+| `zones` | The level's districts: `district(id, name, minX, maxX, minZ, maxZ)` from `game/zones.ts`, tiling the play area (see `COMPOUND_DISTRICTS` in `game/world.ts`, `TOWN_DISTRICTS` in `levels/town/index.ts`). Each guard belongs to the district his post is in (or `EnemySpec.zone`). Alerted guards never leave theirs and fight you only inside it (or when you shoot at them). Trouble elsewhere puts them on caution, looking that way. Each district's radioman carries its radio on his back (`EnemySpec.radio` picks him; else the patrolling guard nearest its middle), and shooting it cuts the district off. Draw three to five districts by where the guards are; without them, every building is its own zone and guards may cross between them. |
 | `briefing` | The pause page: title, premise, `won`/`outro` (the end page), route tips. Leave `map` out and one is drawn from the level. |
 
 ## Goals (`game/goals.ts`)

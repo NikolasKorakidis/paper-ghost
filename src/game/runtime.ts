@@ -368,9 +368,10 @@ export class MissionRuntime {
       if (supply) {
         const point = supply.point.clone().add(new THREE.Vector3(0.7, 0, 0.65))
         const floor = this.player.world.floor(point, 0.1, 2)
-        this.weapons.addPickup({ id: 'maintenance-smg', name: 'smg', magazine: 24, reserve: 48,
+        // Guns lying about hold one magazine and nothing more (AMMO).
+        this.weapons.addPickup({ id: 'maintenance-smg', name: 'smg', magazine: 24, reserve: 0,
           position: [point.x, Number.isFinite(floor) ? floor : 0.12, point.z] })
-        this.weapons.addPickup({ id: 'maintenance-sniper', name: 'sniper', magazine: 5, reserve: 15,
+        this.weapons.addPickup({ id: 'maintenance-sniper', name: 'sniper', magazine: 5, reserve: 0,
           position: [point.x - 1.4, Number.isFinite(floor) ? floor : 0.12, point.z + 0.6] })
       }
       // Weapons the buildings stand up in a corner (userData.weaponSpot), facing the way the spot faces.
@@ -378,7 +379,7 @@ export class MissionRuntime {
         const spot = object.userData.weaponSpot as Omit<WeaponItem, 'position' | 'stand'> | undefined
         if (!spot) return
         const facing = new THREE.Vector3(0, 0, 1).transformDirection(object.matrixWorld)
-        this.weapons.addPickup({ ...spot, position: object.getWorldPosition(new THREE.Vector3()).toArray() as Vec3,
+        this.weapons.addPickup({ ...spot, reserve: 0, position: object.getWorldPosition(new THREE.Vector3()).toArray() as Vec3,
           stand: Math.atan2(facing.x, facing.z) })
       })
       this.placeAtInsertion()

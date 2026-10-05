@@ -59,6 +59,11 @@ async function animations(rig: Rig): Promise<Library> {
 }
 
 /** Ink-grey gear: his helmet, vest and pouches. Ignores light, like his body. */
+/** The radio pack on a radioman's back: its size (m, width × height × depth), how high its middle sits and how far behind his chest. */
+export const RADIO_PACK = { size: [0.3, 0.38, 0.15] as const, height: 1.2, behind: 0.2 }
+const packInverse = new THREE.Matrix4(), packOrigin = new THREE.Vector3(), packEnd = new THREE.Vector3()
+/** How long a guard's knife stab takes (s): the draw back, the thrust and the recovery. */
+export const STAB_TIME = 0.5
 const bossGrey = () => Object.assign(new THREE.MeshBasicMaterial({ color: penPalette.light, toneMapped: false }), { defines: { NEON_UNLIT: '' } })
 
 /** A real independently loaded lab skeleton, with isolated solid black materials. */
@@ -100,6 +105,12 @@ export class EnemyActor {
   /** The head was blown off by a gunshot: it is not drawn, and a stump shows on the neck. */
   headless = false
   private stump: THREE.Mesh | null = null
+  /** The knife is out (drawKnife), and how far through a stab he is (s; -1 when not stabbing). */
+  private knifeDrawn = false
+  private stabTime = -1
+  /** The radio set on his back, if he carries his district's radio (wearRadioPack), and its whip antenna. */
+  private radioPack: THREE.Mesh | null = null
+  private radioAntenna: THREE.Object3D | null = null
   /** The combat helmet an adapted garrison wears (wearHelmet), made on first use. */
   private guardHelmet: THREE.Group | null = null
   private readonly headUniforms = { headGone: { value: 0 }, headBone: { value: 0 } }
@@ -450,7 +461,8 @@ export class EnemyActor {
       }
     }
     this.kick = Math.max(0, this.kick - dt)
-    this.flash.visible = this.kick > 0.065
+    this.flash.visible = this.kick > 0.065 && !this.knifeDrawn
+    if (this.stabTime >= 0) this.stabPose(dt)
     if (this.kick > 0) this.player.adjustBones([this.rig.bones.chest], () => { this.rig.bones.chest.rotation.x -= this.kick * 0.17 })
     this.player.blendPose(this.bodyPosture === 'stand')
     this.body?.follow()
@@ -547,6 +559,41 @@ export class EnemyActor {
 
   shoot() { this.kick = 0.11 }
 
+  /**
+   * Out of ammunition with no crate left (game/ai.ts): the knife comes out in his gun hand. holsterKnife puts his own
+   * gun back (a checkpoint from before he ran dry).
+   */
+  drawKnife() {
+    if (this.knifeDrawn) return
+    this.knifeDrawn = true
+    this.carry('knife')
+  }
+
+  holsterKnife() {
+    if (!this.knifeDrawn) return
+    this.knifeDrawn = false
+    this.carry(this.weapon as GunName)
+    this.stabTime = -1
+  }
+
+  /** A stab: the arm draws back, then drives the blade forward with the chest turning into it, then recovers. */
+  stab() { if (this.knifeDrawn) this.stabTime = 0 }
+
+  private stabPose(dt: number) {
+    this.stabTime += dt
+    const t = this.stabTime / STAB_TIME
+    if (t >= 1) { this.stabTime = -1; return }
+    // 0-35%: draw back; 35-55%: drive forward; then back to the hold.
+    const back = t < 0.35 ? Math.sin(t / 0.35 * Math.PI / 2) : Math.max(0, 1 - (t - 0.35) / 0.12)
+    const drive = t < 0.35 ? 0 : t < 0.55 ? Math.sin((t - 0.35) / 0.2 * Math.PI / 2) : Math.max(0, 1 - (t - 0.55) / 0.45)
+    const { chest } = this.rig.bones, upper = this.rig.bones['upper_arm.R'], fore = this.rig.bones['forearm.R']
+    this.player.adjustBones([chest, upper, fore], () => {
+      chest.rotation.y += 0.28 * back - 0.4 * drive
+      upper.rotation.x += 0.7 * back - 1.1 * drive
+      fore.rotation.x += 0.9 * back - 0.6 * drive
+    })
+  }
+
   /** A non-lethal flinch interrupts locomotion for the clip's length; a lethal clip name is used by the next dead update. */
   react(clip: string, lethal: boolean, direction?: THREE.Vector3, travelScale = 1) {
     if (this.dead) return
@@ -637,6 +684,74 @@ export class EnemyActor {
       this.guardHelmet = helmet
     }
     this.guardHelmet.visible = true
+  }
+
+  /**
+   * His district's radio, on his back (game/ai.ts: the zone's operator): a grey box strapped between his shoulders with
+   * a whip antenna, outlined in ink. Shooting it breaks it (breakRadioPack) and his district can no longer call anyone.
+   */
+  wearRadioPack() {
+    if (this.radioPack) { this.radioPack.visible = true; return }
+    this.root.updateMatrixWorld(true)
+    const grey = Object.assign(new THREE.MeshBasicMaterial({ color: penPalette.light, toneMapped: false }), { defines: { NEON_UNLIT: '' } })
+    const geometry = new RoundedBoxGeometry(RADIO_PACK.size[0], RADIO_PACK.size[1], RADIO_PACK.size[2], 2, 0.02)
+    const pack = new THREE.Mesh(geometry, grey)
+    pack.name = 'Radio pack'
+    pack.userData.noCollision = true
+    pack.add(createPenSilhouette(geometry, 2.2))
+    // Its lid seam and a dial, so it reads as a radio set from behind.
+    const [w, h, d] = RADIO_PACK.size
+    pack.add(createPenLines([new THREE.Vector3(-w / 2, h * 0.28, -d / 2 - 0.002), new THREE.Vector3(w / 2, h * 0.28, -d / 2 - 0.002)], 4480, 'detail', 1.2))
+    pack.add(createPenLines([new THREE.Vector3(-w * 0.25, h * 0.05, -d / 2 - 0.002), new THREE.Vector3(-w * 0.05, h * 0.05, -d / 2 - 0.002)], 4481, 'detail', 1.2))
+    const antenna = createPenLines([new THREE.Vector3(w * 0.32, h / 2, 0), new THREE.Vector3(w * 0.36, h / 2 + 0.55, 0.02)], 4482, 'detail', 1.4)
+    pack.add(antenna)
+    pack.position.set(0, RADIO_PACK.height, this.root.worldToLocal(this.rig.bones.chest.getWorldPosition(new THREE.Vector3())).z - RADIO_PACK.behind)
+    this.root.add(pack)
+    this.rig.bones.chest.attach(pack)
+    this.radioPack = pack
+    this.radioAntenna = antenna
+  }
+
+  /** Shot through: the antenna gone, the case cracked and hanging askew. */
+  breakRadioPack() {
+    if (!this.radioPack || this.radioPack.userData.broken) return
+    this.radioPack.userData.broken = true
+    if (this.radioAntenna) this.radioAntenna.visible = false
+    const [w, h, d] = RADIO_PACK.size
+    this.radioPack.add(createPenLines([new THREE.Vector3(-w * 0.4, h * 0.35, -d / 2 - 0.003), new THREE.Vector3(-w * 0.1, h * 0.05, -d / 2 - 0.003),
+      new THREE.Vector3(-w * 0.2, -h * 0.1, -d / 2 - 0.003), new THREE.Vector3(w * 0.15, -h * 0.35, -d / 2 - 0.003)], 4483, 'detail', 1.6))
+    this.radioPack.rotation.z += 0.18
+  }
+
+  /** A checkpoint from before the pack was broken (or before he had one). */
+  restoreRadioPack(state: 'none' | 'live' | 'broken') {
+    if (state === 'none') { if (this.radioPack) this.radioPack.visible = false; return }
+    if (this.radioPack?.userData.broken && state === 'live') {
+      this.radioPack.removeFromParent()
+      this.radioPack = null
+    }
+    this.wearRadioPack()
+    if (state === 'broken') this.breakRadioPack()
+  }
+
+  /** How far along a shot (`origin`, unit `direction`) it meets his radio pack, within `far`; null if it misses or he has none. */
+  radioPackHit(origin: THREE.Vector3, direction: THREE.Vector3, far: number) {
+    const pack = this.radioPack
+    if (!pack?.visible || pack.userData.broken) return null
+    pack.updateWorldMatrix(true, false)
+    const inverse = packInverse.copy(pack.matrixWorld).invert()
+    const o = packOrigin.copy(origin).applyMatrix4(inverse), end = packEnd.copy(direction).multiplyScalar(far).add(origin).applyMatrix4(inverse)
+    const d = end.sub(o)
+    const [w, h, depth] = RADIO_PACK.size
+    let near = 0, farT = 1
+    for (const [p, v, half] of [[o.x, d.x, w / 2], [o.y, d.y, h / 2], [o.z, d.z, depth / 2]] as const) {
+      if (Math.abs(v) < 1e-9) { if (Math.abs(p) > half) return null; continue }
+      let t1 = (-half - p) / v, t2 = (half - p) / v
+      if (t1 > t2) [t1, t2] = [t2, t1]
+      near = Math.max(near, t1); farT = Math.min(farT, t2)
+      if (near > farT) return null
+    }
+    return near * far
   }
 
   /** The helmet knocked off by a head shot (or not worn after a checkpoint from before he had one). */

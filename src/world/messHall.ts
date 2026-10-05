@@ -278,7 +278,7 @@ export function messHall(spec: BuildingSpec): THREE.Group {
   rifleSpot.name = 'Signals office · sniper rifle spot'
   rifleSpot.position.set(officeWallX - WALL_THICKNESS / 2 - 0.3, floor, 4 - WALL_THICKNESS / 2 - 0.3)
   rifleSpot.rotation.y = -Math.PI * 3 / 4
-  rifleSpot.userData.weaponSpot = { id: 'office-sniper', name: 'sniper', magazine: 5, reserve: 10 }
+  rifleSpot.userData.weaponSpot = { id: 'office-sniper', name: 'sniper', magazine: 5, reserve: 0 }
   g.add(rifleSpot)
 
   // Ground arrival room and isolated stair lane. The vestibule door opens into a clear hall aisle.

@@ -21,7 +21,18 @@ export type ZonePhase = 'normal' | 'caution' | 'search' | 'alert'
  * An area of the level: a rectangle on the ground (`half` its half-size), turned `yaw` about its centre. `yard` is how
  * much of that is the ground round its buildings: where zones' yards overlap, a point belongs to the nearer building.
  */
-export type ZoneSpec = { id: string; name: string; center: [number, number]; half: [number, number]; yaw?: number; yard?: number }
+export type ZoneSpec = { id: string; name: string; center: [number, number]; half: [number, number]; yaw?: number; yard?: number
+  /**
+   * A district (authored on the level, MissionWorld.zones): its guards never leave it once alerted, and fight you only
+   * while you are in it (or close to its edge: ZONES.district), or when you shoot at them. Trouble anywhere else only
+   * puts them on caution, looking that way.
+   */
+  district?: boolean }
+
+/** A district from its extent on the ground: x from `minX` to `maxX`, z from `minZ` to `maxZ` (north is −z). */
+export function district(id: string, name: string, minX: number, maxX: number, minZ: number, maxZ: number): ZoneSpec {
+  return { id, name, center: [(minX + maxX) / 2, (minZ + maxZ) / 2], half: [(maxX - minX) / 2, (maxZ - minZ) / 2], district: true }
+}
 export type Zone = ZoneSpec & {
   phase: ZonePhase
   /** Seconds left in this phase (alert: seconds since contact was last had). */
@@ -162,7 +173,8 @@ export class ZoneNetwork {
     for (let i = 0; i < this.zones.length; i++) {
       if (i === index) continue
       const other = this.zones[i]
-      if (!radio && this.gap(i, index) > ZONES.shout) continue
+      // Without the radio a building's men can still shout across to the next; a district can tell nobody.
+      if (!radio && (zone.district || this.gap(i, index) > ZONES.shout)) continue
       if (RANK[other.phase] > RANK.caution) continue
       const was = other.phase
       other.phase = 'caution'

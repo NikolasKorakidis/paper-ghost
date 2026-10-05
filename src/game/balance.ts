@@ -102,7 +102,15 @@ export const ENEMY_WEAPONS = {
  * stops shooting. You can restock at the crates too: each gun's spare ammunition back up to `player` magazines.
  * A sniper rifle taken from a guard holds one magazine and nothing more.
  */
-export const AMMO = { spare: 2, player: 3, supplyReach: 1.3 } as const
+/**
+ * Ammunition, in magazines counting the one in the gun. The player carries at most `player` of any gun (also what a
+ * crate refills to, and the most a gun picked up off the floor brings); guards carry `enemy` and restock at the supply
+ * crates when they run dry (with none left, they draw their knives). A gun lying about the level holds one magazine.
+ * `supplyReach`: how close to a crate a guard must be to restock (m).
+ */
+export const AMMO = { player: 2, enemy: 4, supplyReach: 1.3 } as const
+/** The most rounds the player may carry for a gun of `capacity`, the loaded magazine included. */
+export const playerAmmoCap = (capacity: number) => capacity * AMMO.player
 
 /** Chance a player's head shot blows the guard's head apart (always lethal). Other weapons never do. */
 export const HEAD_BURST_CHANCE: Partial<Record<WeaponName, number>> = { pistol: 0.1, silenced: 0.1, smg: 0.1, ak: 0.25, sniper: 1 }
@@ -211,6 +219,11 @@ export const ZONES = {
    */
   radio: { interval: [70, 110] as const },
   /**
+   * Districts (ZoneSpec.district): an alerted guard keeps within `margin` m of his district; he fights you only while
+   * you are within `engage` m of it (or you shoot at him). Help comes only from the same district.
+   */
+  district: { margin: 1.5, engage: 8 },
+  /**
    * The garrison adapts (after MGS5): each time a zone stands down from an alert or a search, the more often it has
    * been hit (`heat`), the more it changes. From `sentry` on, a man is posted where you were first seen, watching the
    * way you came (up to `sentries`); from `pairs`, its patrols walk in twos (the second `buddy` m behind); from `helmets`,
@@ -229,7 +242,7 @@ export const ZONES = {
  * `clear` m of it; his squad then waits `cooldown` s before the next. `dodge`: a guard within `radius` m of a grenade
  * landing runs `distance` m from it. `fallBack`: once a squad has lost as many men as it has left, a wounded man (under
  * `health`) falls back to cover away from you and his zone calls for help again (at most every `call` s). `overwatch`:
- * a sniper who sees you radios your position every `every` s to the men hunting you within `reach` m.
+ * a sniper who sees you radios your position every `every` s to the men hunting you within `reach` m. `knife`: below.
  */
 export const COMBAT_ROLES = {
   suppress: { after: 0.6, time: 6, range: 45 },
@@ -237,6 +250,11 @@ export const COMBAT_ROLES = {
   dodge: { radius: 6, distance: 8, time: 2.5 },
   fallBack: { health: 70, call: 30 },
   overwatch: { every: 3, reach: 120 },
+  /**
+   * Out of every round with no crate left, a guard draws his knife and comes for you: he stabs within `reach` m,
+   * every `every` s, the blade landing `windup` s into the stab for `damage`.
+   */
+  knife: { reach: 1.6, every: 1.1, windup: 0.24, damage: 34 },
 } as const
 
 /**
@@ -285,7 +303,7 @@ export const STARTING_SLOT = 0
 export function startingLoadout(): (WeaponItem | null)[] {
   return [
     { id: 'player-knife', name: 'knife', magazine: 0, reserve: 0 },
-    { id: 'player-silenced', name: 'silenced', magazine: 12, reserve: 36 },
+    { id: 'player-silenced', name: 'silenced', magazine: 12, reserve: 12 },
     null,
   ]
 }

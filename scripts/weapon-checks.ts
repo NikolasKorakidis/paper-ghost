@@ -130,10 +130,11 @@ test('Category slots: a pickup fills its own slot, a second weapon of a kind swa
   assert(weapons.snapshot().pickups.some(item => item.id === 'ak-1' && item.magazine === 7 && item.reserve === 9))
   step(0.3); assert(weapons.drop(new THREE.Vector3()))
   assert.equal(weapons.slots[2], null)
-  assert(take('sniper-3')); assert.equal(weapons.ammo, '5 / 10')
+  // Picked up, a gun brings no more than two magazines (AMMO.player): the sniper's other five rounds stay behind.
+  assert(take('sniper-3')); assert.equal(weapons.ammo, '5 / 5')
   assert(weapons.switchSlot(0)); step(0.3); assert(!weapons.drop(new THREE.Vector3()), 'The knife cannot be dropped')
   const total = [...weapons.snapshot().slots, ...weapons.snapshot().pickups].reduce((sum, item) => sum + (item ? item.magazine + item.reserve : 0), 0)
-  assert.equal(total, 48 + 16 + 10 + 15, 'Swaps and drops conserve every cartridge')
+  assert.equal(total, 48 + 16 + 10 + 15 - 5, 'Swaps and drops conserve every cartridge but what a pickup could not carry')
   const checkpoint = JSON.parse(JSON.stringify(weapons.snapshot()))
   weapons.restore(checkpoint)
   assert.deepEqual(weapons.snapshot(), checkpoint)

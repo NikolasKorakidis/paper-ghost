@@ -92,6 +92,8 @@ export function rayBodyDistance(origin: THREE.Vector3, rayDirection: THREE.Vecto
 }
 
 export type Tactic = 'hold' | 'cover' | 'peek' | 'flank' | 'charge' | 'retreat'
+/** Where a shot meets a guard: his body (`zone`, `bone`), or the radio pack on his back (`pack`). */
+export type EnemyHit = { index: number; zone: HitZone; point: THREE.Vector3; bone?: import('../lab/rig').BoneName; distance: number; direction: THREE.Vector3; pack?: boolean }
 
 export type Enemy = {
   spec: EnemySpec
@@ -115,7 +117,7 @@ export type Enemy = {
   shotTimer: number
   shots: number
   magazine: number
-  /** Rounds he carries besides the magazine (AMMO.spare magazines to start); at none, he must restock at a crate. */
+  /** Rounds he carries besides the magazine (AMMO.enemy magazines in all to start); at none, he must restock at a crate. */
   reserve: number
   /** The supply crate he is heading for while out of ammunition, and where he will stand to take from it. */
   supply: { id: string; point: THREE.Vector3 } | null
@@ -163,6 +165,12 @@ export type Enemy = {
   buddy: Enemy | null
   /** Wearing a helmet (ZONES.adapt): it stops one head shot. */
   helmet: boolean
+  /** The radio set on his back (his zone's operator): none, working, or shot through. */
+  radioPack: 'none' | 'live' | 'broken'
+  /** Knife out (no rounds and no crate left), seconds to his next stab, and to the blade landing in this one. */
+  knife: boolean
+  stabTimer: number
+  stabWindup: number
   /** Frag grenades left, and seconds before his squad may throw another (COMBAT_ROLES.grenade). */
   grenades: number
   grenadeCooldown: number
@@ -221,7 +229,7 @@ const vector = (value: unknown) => Array.isArray(value) && value.length === 3 &&
 const number = (value: unknown, fallback = 0) => typeof value === 'number' && Number.isFinite(value) ? value : fallback
 const NUMBERS = ['repath', 'stuck', 'senseTimer', 'lostFor', 'shotTimer', 'shots', 'magazine', 'reserve', 'reloadTimer', 'calloutTimer', 'communicationTimer', 'wait',
   'patrolStop', 'visitedWaypoints', 'distanceWalked', 'footstepDistance', 'pathFailures', 'tacticTimer', 'burst', 'aimTime', 'blockedFor', 'contactMemory', 'notice', 'provoked', 'suppress', 'settledFor', 'hitPause', 'moveSpeed', 'searchIndex',
-  'scanTimer', 'scanDuration', 'scanCooldown', 'scanYaw', 'defensiveTimer', 'armor', 'respawnTimer', 'blind', 'caution', 'planFailStreak', 'passThrough', 'watchTimer', 'team', 'teamSlot', 'bound', 'grenades', 'grenadeCooldown', 'dodgeTimer'] as const
+  'scanTimer', 'scanDuration', 'scanCooldown', 'scanYaw', 'defensiveTimer', 'armor', 'respawnTimer', 'blind', 'caution', 'planFailStreak', 'passThrough', 'watchTimer', 'team', 'teamSlot', 'bound', 'grenades', 'grenadeCooldown', 'dodgeTimer', 'stabTimer', 'stabWindup'] as const
 
 export class EnemyDirector {
   readonly enemies: Enemy[] = []
@@ -258,6 +266,8 @@ export class EnemyDirector {
   private flashlights: GuardFlashlights | null = null
   /** Hiding places on the level (furniture a man fits behind or in), each with its zone. */
   private hidingSpots: { position: THREE.Vector3; zone: number }[] = []
+  /** Where each alerted guard's last out-of-district destination was brought back inside it (tether). */
+  private tethers = new Map<Enemy, { from: THREE.Vector3; to: THREE.Vector3 }>()
   /** When each sniper last radioed your position (COMBAT_ROLES.overwatch). */
   private overwatchAt = new Map<Enemy, number>()
   /** The radio sets still working, looked up at most every quarter second (radioSets builds a list each call). */
@@ -295,12 +305,12 @@ export class EnemyDirector {
         state: spec.reserve ? 'reserve' : spec.patrol.length > 1 ? 'patrol' : 'guard',
         suspicion: 0, lastKnown: null, timer: 0, waypoint: spec.patrol.length > 1 ? 1 : 0, patrolStop: 0,
         path: [], pathTarget: null, repath: 0, stuck: 0, senseTimer: (i % 6) * 0.016,
-        canSee: false, lostFor: 0, shotTimer: 0, shots: 0, magazine: WEAPON[spec.weapon].magazine, reserve: WEAPON[spec.weapon].magazine * AMMO.spare, supply: null, reloadTimer: 0, calloutTimer: 0,
+        canSee: false, lostFor: 0, shotTimer: 0, shots: 0, magazine: WEAPON[spec.weapon].magazine, reserve: WEAPON[spec.weapon].magazine * (AMMO.enemy - 1), supply: null, reloadTimer: 0, calloutTimer: 0,
         communicationTimer: 0, wait: 0.5 + i * 0.13, dropped: false, random: 7391 + i * 3571,
         reserveRoute: false, alarmResponse: false, alarmExit: null, post: null, visitedWaypoints: 0, distanceWalked: 0, footstepDistance: 0, pathFailures: 0,
         tactic: 'hold', tacticTimer: 0, tacticPoint: null, burst: 0, aimTime: 0, blockedFor: 0, contactMemory: 0, notice: 0, provoked: 0, squad: -1, flanked: false, suppress: 0, settledFor: 0, hitPause: 0, moveSpeed: 0,
         searchPoints: [], searchLooks: [], searchIndex: 0, bound: 0,
-        grenades: spec.grenades ?? (spec.weapon === 'ak' || spec.weapon === 'smg' ? ROLES.grenade.carry : 0), grenadeCooldown: 0, dodgePoint: null, dodgeTimer: 0, sentry: false, buddy: null, helmet: false, woundArm: false, woundLeg: false, deathClip: 'dieBody', headless: false, speaker: i % 4, noticedBodies: [],
+        grenades: spec.grenades ?? (spec.weapon === 'ak' || spec.weapon === 'smg' ? ROLES.grenade.carry : 0), grenadeCooldown: 0, dodgePoint: null, dodgeTimer: 0, knife: false, stabTimer: 0, stabWindup: 0, radioPack: 'none', sentry: false, buddy: null, helmet: false, woundArm: false, woundLeg: false, deathClip: 'dieBody', headless: false, speaker: i % 4, noticedBodies: [],
         scanTimer: 0, scanDuration: 0, scanCooldown: 0, scanYaw: 0, defensiveTimer: 0, blind: 0,
         caution: 0, lastHeading: null, searchKind: 'noise', planFailStreak: 0, passThrough: 0,
         slot: i, zone: -1, watch: null, watchTimer: 0, screen: false, team: -1, teamSlot: 0, sector: null,
@@ -384,7 +394,7 @@ export class EnemyDirector {
       // Already being checked by someone else on the search?
       if (this.enemies.some(ally => ally !== enemy && ally.state === 'search' && ally.searchLooks.some(look => look && look.distanceTo(spot.position) < 0.5))) continue
       const point = this.hidingPoint(spot.position, enemy.position)
-      if (point && this.availablePosition(enemy, point, 1)) checks.push({ point, look: spot.position.clone().setY(spot.position.y + 0.6) })
+      if (point && this.availablePosition(enemy, point, 1) && this.reaches(enemy, point, ZONES.district.margin)) checks.push({ point, look: spot.position.clone().setY(spot.position.y + 0.6) })
     }
     return checks
   }
@@ -408,17 +418,26 @@ export class EnemyDirector {
       const post = (enemy: Enemy) => new THREE.Vector3(...enemy.spec.position)
       const radios = sets.filter(set => this.zoneSets[index].includes(set.id)).map(set => set.position)
       const center = new THREE.Vector3(zone.center[0], 0, zone.center[1])
-      const score = (enemy: Enemy) => (radios.length ? Math.min(...radios.map(radio => post(enemy).distanceTo(radio))) : post(enemy).distanceTo(center)) +
-        (enemy.spec.patrol.length > 1 ? 100 : 0) + (enemy.spec.role === 'sniper' ? 200 : 0)
+      // A district's radioman walks a round near its middle (so you can get behind him); a building's sits by its set.
+      const score = zone.district
+        ? (enemy: Enemy) => post(enemy).distanceTo(center) + (enemy.spec.patrol.length > 1 ? 0 : 60) + (enemy.spec.role === 'sniper' ? 200 : 0)
+        : (enemy: Enemy) => (radios.length ? Math.min(...radios.map(radio => post(enemy).distanceTo(radio))) : post(enemy).distanceTo(center)) +
+          (enemy.spec.patrol.length > 1 ? 100 : 0) + (enemy.spec.role === 'sniper' ? 200 : 0)
       return guards.reduce((best, enemy) => score(enemy) < score(best) ? enemy : best)
     })
+    // Each operator carries his zone's radio on his back.
+    for (const operator of this.operators) {
+      if (!operator) continue
+      operator.radioPack = 'live'
+      operator.actor.wearRadioPack?.()
+    }
   }
 
   /** Whether zone `index` can use its radio: its operator is alive and, if it has radio sets, one of them still works. */
   zoneRadio(index: number) {
     if (index < 0 || !(this.lastPlayer?.radioEnabled ?? true)) return false
     const operator = this.operators[index]
-    if (!operator || operator.health <= 0 || operator.state === 'dead') return false
+    if (!operator || operator.health <= 0 || operator.state === 'dead' || operator.radioPack === 'broken') return false
     const sets = this.zoneSets[index]
     if (!sets?.length) return true
     if (this.elapsed - this.liveSetsAt > 0.25 || this.elapsed < this.liveSetsAt) {
@@ -516,6 +535,50 @@ export class EnemyDirector {
     if (every > 1 && (this.frame + enemy.slot) % every !== 0) { this.animationDebt.set(enemy, saved); return 0 }
     this.animationDebt.set(enemy, 0)
     return Math.min(saved, 0.2)
+  }
+
+  /** Whether the level is split into districts (authored ZoneSpec.district): then guards keep to their own. */
+  private get districts() { return this.zones.zones.some(zone => zone.district) }
+
+  /**
+   * Whether `point` is his business: within `margin` m of his district (ZONES.district), or anywhere if he has none
+   * (levels without districts). Sounds, sightings, bodies and radio calls outside it only make him look.
+   */
+  private reaches(enemy: Enemy, point: THREE.Vector3, margin: number = ZONES.district.engage) {
+    const zone = this.zones.zones[enemy.zone]
+    return !zone?.district || this.zones.distanceTo(enemy.zone, point) <= margin
+  }
+
+  /** Whether he fights this player: in (or close to) his district, or after being shot at. */
+  private engages(enemy: Enemy, player: PlayerSense) {
+    return enemy.provoked > 0 || this.reaches(enemy, player.feet)
+  }
+
+  /** Trouble outside his district: he does not go, but turns and watches that way, cautious. */
+  private watchFrom(enemy: Enemy, point: THREE.Vector3) {
+    (enemy.watch ??= new THREE.Vector3()).copy(point)
+    enemy.watchTimer = Math.max(enemy.watchTimer, ZONES.watch[1])
+    enemy.caution = Math.max(enemy.caution, DETECTION.caution.gunshot)
+  }
+
+  /**
+   * Where an alerted guard may go toward `destination`: there, if it is in his district; else the nearest floor just
+   * inside its edge, on his side (cached while the destination stays put).
+   */
+  private tether(enemy: Enemy, destination: THREE.Vector3) {
+    if (this.reaches(enemy, destination, ZONES.district.margin)) return destination
+    const cached = this.tethers.get(enemy)
+    if (cached && cached.from.distanceToSquared(destination) < 0.25) return cached.to
+    const zone = this.zones.zones[enemy.zone], inset = 1.5
+    const inside = new THREE.Vector3(
+      clamp(destination.x, zone.center[0] - zone.half[0] + inset, zone.center[0] + zone.half[0] - inset), destination.y,
+      clamp(destination.z, zone.center[1] - zone.half[1] + inset, zone.center[1] + zone.half[1] - inset))
+    let to: THREE.Vector3 | null = null
+    // Back toward him until there is floor to stand on.
+    for (let t = 0; t <= 1 && !to; t += 0.2) to = this.navigation.floor(inside.clone().lerp(enemy.position, t).setY(enemy.position.y))
+    to ??= enemy.position.clone()
+    this.tethers.set(enemy, { from: destination.clone(), to })
+    return to
   }
 
   /** The guards of zone `index` still up and about (not training targets). */
@@ -692,8 +755,9 @@ export class EnemyDirector {
     const zone = this.zones.zones[index]
     // Help is called by radio.
     if (!zone.focus || !this.zoneRadio(index)) return
-    let nearest = -1
-    for (let i = 0; i < this.zones.zones.length; i++) {
+    // In a level of districts, help comes only from the district's own calm men; else from the nearest cautious zone.
+    let nearest = this.districts ? index : -1
+    for (let i = 0; i < this.zones.zones.length && !this.districts; i++) {
       if (i === index || this.zones.zones[i].phase !== 'caution' || this.zones.gap(i, index) > ZONES.reinforceReach) continue
       if (nearest < 0 || this.zones.gap(i, index) < this.zones.gap(nearest, index)) nearest = i
     }
@@ -707,7 +771,7 @@ export class EnemyDirector {
       enemy.searchKind = 'noise'; enemy.lastHeading = null
       enemy.caution = Math.max(enemy.caution, DETECTION.caution.gunshot)
       this.enter(enemy, 'investigate')
-      if (!i) this.say(enemy, `Moving to support the ${zone.name.toLowerCase()}!`, 'search', true)
+      if (!i) this.say(enemy, nearest === index ? 'Moving up! Where is he?' : `Moving to support the ${zone.name.toLowerCase()}!`, 'search', true)
     })
   }
 
@@ -822,6 +886,7 @@ export class EnemyDirector {
     for (const ally of this.enemies) {
       if (ally === source || ['dead', 'reserve', 'combat'].includes(ally.state) || ally.position.distanceTo(source.position) > radius) continue
       if (!this.lastPlayer?.radioEnabled && !this.context.world.visible(source.position.clone().add(eyeOffset), ally.position.clone().add(eyeOffset), ignore)) continue
+      if (!this.reaches(ally, source.lastKnown)) { this.watchFrom(ally, source.lastKnown); continue }
       ally.lastKnown = source.lastKnown.clone()
       ally.suspicion = Math.max(ally.suspicion, 0.4)
       ally.lostFor = 0
@@ -866,8 +931,11 @@ export class EnemyDirector {
     const parent = this.enemies.map((_, i) => i)
     const root = (i: number): number => parent[i] === i ? i : (parent[i] = root(parent[i]))
     const pool = this.enemies.map((enemy, i) => ({ enemy, i })).filter(({ enemy }) => !enemy.spec.dummy && !enemy.spec.squad)
+    // Never across a district line.
+    const districts = this.context.zones?.some(zone => zone.district) ? new ZoneNetwork(this.context.zones) : null
+    const districtOf = (enemy: Enemy) => districts ? districts.zoneAt(new THREE.Vector3(...enemy.spec.position), ZONES.reach) : -1
     for (const a of pool) for (const b of pool) {
-      if (b.i <= a.i) continue
+      if (b.i <= a.i || districtOf(a.enemy) !== districtOf(b.enemy)) continue
       const pa = new THREE.Vector3(...a.enemy.spec.position), pb = new THREE.Vector3(...b.enemy.spec.position)
       if (Math.hypot(pa.x - pb.x, pa.z - pb.z) < DETECTION.squadLink && Math.abs(pa.y - pb.y) < DETECTION.squadRise) parent[root(a.i)] = root(b.i)
     }
@@ -896,6 +964,7 @@ export class EnemyDirector {
     if (!source.lastKnown) return
     for (const ally of this.squadmates(source)) {
       if (ally.state === 'combat') continue
+      if (!this.reaches(ally, source.lastKnown)) { this.watchFrom(ally, source.lastKnown); continue }
       const watching = ally.canSee
       if (!watching) ally.lastKnown = source.lastKnown.clone()
       ally.suspicion = 1; ally.notice = DETECTION.notice; ally.lostFor = 0
@@ -1111,6 +1180,13 @@ export class EnemyDirector {
       const point = body.position.clone().add(new THREE.Vector3(0, 0.3, 0))
       if (!insideVisionCone(eye, enemy.yaw, point, DETECTION.bodySight, DETECTION.fov / 2) || !this.context.world.visible(eye, point, ignore)) continue
       enemy.noticedBodies.push(body.spec.id)
+      // A body over in another district: he radios it in (that district searches) and watches; he does not go.
+      if (!this.reaches(enemy, body.position)) {
+        this.watchFrom(enemy, body.position)
+        this.say(enemy, 'Man down over there! Check it out!', 'search', true)
+        this.raiseZone(this.zones.zoneAt(body.position, ZONES.reach), 'search', body.position)
+        break
+      }
       enemy.lastKnown = body.position.clone()
       enemy.suspicion = Math.max(enemy.suspicion, 0.6)
       enemy.lostFor = 0
@@ -1120,7 +1196,7 @@ export class EnemyDirector {
       this.say(enemy, 'Man down! Search the area!', 'search', true)
       this.communicate(enemy)
       for (const ally of this.squadmates(enemy)) {
-        if (ally.state === 'combat' || ally.noticedBodies.includes(body.spec.id)) continue
+        if (ally.state === 'combat' || ally.noticedBodies.includes(body.spec.id) || !this.reaches(ally, body.position)) continue
         ally.noticedBodies.push(body.spec.id)
         ally.lastKnown = body.position.clone(); ally.lostFor = 0
         ally.searchKind = 'body'; ally.suspicion = Math.max(ally.suspicion, 0.6)
@@ -1213,7 +1289,9 @@ export class EnemyDirector {
       enemy.senseTimer -= dt
       if (enemy.senseTimer <= 0) {
         enemy.senseTimer = enemy.state === 'combat' ? COMBAT.senseCombat : COMBAT.senseIdle
-        const seen = this.sight(enemy)
+        let seen = this.sight(enemy)
+        // Someone outside his district (and not shooting at him) is not his fight: he watches him, cautious.
+        if (seen && !this.engages(enemy, seen)) { this.watchFrom(enemy, seen.feet); seen = null }
         enemy.canSee = !!seen
         // Only an actual sight query supplies a position; cached visibility never tracks a hidden player.
         if (seen) {
@@ -1280,7 +1358,7 @@ export class EnemyDirector {
         moving = this.move(enemy, enemy.dodgePoint, this.speed(enemy, ENEMY_RUN_SPEED), dt)
         if (enemy.dodgeTimer <= 0 || enemy.position.distanceTo(enemy.dodgePoint) < 0.6) { enemy.dodgePoint = null; enemy.dodgeTimer = 0; enemy.path = []; enemy.pathTarget = null }
       } else if (this.dry(enemy)) {
-        moving = this.resupply(enemy, dt)
+        moving = this.resupply(enemy, player, dt)
       } else if (enemy.state === 'combat') {
         moving = this.combat(enemy, player, dt)
       } else if (enemy.state === 'suspicious') {
@@ -1369,14 +1447,15 @@ export class EnemyDirector {
    * Out of ammunition: run to the nearest supply crate still standing and restock (a full magazine and AMMO.spare
    * more). With no crate left, get out of the threat's sight and keep his head down.
    */
-  private resupply(enemy: Enemy, dt: number) {
+  private resupply(enemy: Enemy, player: PlayerSense, dt: number) {
     const supplies = this.context.supplies?.() ?? []
     if (enemy.supply && !supplies.some(crate => crate.id === enemy.supply!.id)) enemy.supply = null
     if (!enemy.supply) {
       let best: { id: string; point: THREE.Vector3 } | null = null, nearest = Infinity
       for (const crate of supplies) {
         const distance = crate.position.distanceTo(enemy.position) + Math.abs(crate.position.y - enemy.position.y) * 4
-        if (distance >= nearest) continue
+        // Only a crate in his own district.
+        if (distance >= nearest || !this.reaches(enemy, crate.position, ZONES.district.margin + 2)) continue
         // Somewhere to stand beside it: the crate itself is in the way.
         for (const radius of [0.9, 1.15]) for (let i = 0; i < 8; i++) {
           const angle = i / 8 * Math.PI * 2
@@ -1392,18 +1471,48 @@ export class EnemyDirector {
       if (enemy.position.distanceTo(enemy.supply.point) > AMMO.supplyReach) return this.move(enemy, enemy.supply.point, run, dt)
       // At the crate: restock and get back to it.
       const magazine = WEAPON[enemy.spec.weapon].magazine
-      enemy.magazine = magazine; enemy.reserve = magazine * AMMO.spare; enemy.supply = null; enemy.shotTimer = 0.4
+      enemy.magazine = magazine; enemy.reserve = magazine * (AMMO.enemy - 1); enemy.supply = null; enemy.shotTimer = 0.4
       enemy.tactic = 'hold'; enemy.tacticPoint = null; enemy.tacticTimer = 0
       this.context.emit({ kind: 'enemy-reload', position: enemy.position.clone(), radius: 5, weapon: enemy.spec.weapon })
       this.say(enemy, 'Restocked!', 'reload')
       return false
     }
-    // Nothing left to restock from: into cover from wherever the threat was, and stay there.
-    if (enemy.lastKnown) {
-      const threat = enemy.lastKnown.clone().add(eyeOffset)
-      if (!enemy.tacticPoint || enemy.tactic !== 'retreat') { enemy.tacticPoint = this.coverPoint(enemy, threat, true); enemy.tactic = 'retreat' }
-      if (enemy.tacticPoint && enemy.position.distanceTo(enemy.tacticPoint) > 0.5) return this.move(enemy, enemy.tacticPoint, run, dt)
-      this.face(enemy, enemy.lastKnown, dt)
+    // Nothing left to restock from: the knife.
+    return this.knifeFight(enemy, player, dt)
+  }
+
+  /**
+   * A guard with no rounds and no crate left draws his knife and comes for you (COMBAT_ROLES.knife): to where he saw
+   * you, at a run, and within reach he stabs. A training target or the boss never does; they never run dry.
+   */
+  private knifeFight(enemy: Enemy, player: PlayerSense, dt: number) {
+    const rules = ROLES.knife
+    if (!enemy.knife) {
+      enemy.knife = true
+      enemy.actor.drawKnife?.()
+      this.say(enemy, 'I\'m out! Knife!', 'contact', true)
+    }
+    enemy.stabTimer = Math.max(0, enemy.stabTimer - dt)
+    // The blade lands partway into the stab, if you are still in front of him and within reach.
+    if (enemy.stabWindup > 0 && (enemy.stabWindup -= dt) <= 0) {
+      const reach = flat(player.feet.x, player.feet.z, enemy.position.x, enemy.position.z)
+      const ahead = Math.cos(Math.atan2(player.feet.x - enemy.position.x, player.feet.z - enemy.position.z) - enemy.yaw)
+      if (player.alive && reach <= rules.reach + 0.2 && ahead > 0.5 && Math.abs(player.feet.y - enemy.position.y) < 1.2 &&
+        this.context.world.visible(this.eye(enemy), player.eye, ignore)) {
+        this.context.damagePlayer(rules.damage, enemy.position.clone(), undefined, player.id)
+        this.context.emit({ kind: 'knife-stab', position: player.eye.clone(), radius: 6 })
+      }
+    }
+    const target = enemy.canSee ? player.feet : enemy.lastKnown
+    if (!target) return false
+    const distance = flat(target.x, target.z, enemy.position.x, enemy.position.z)
+    if (distance > rules.reach * 0.8) return this.move(enemy, target.clone(), this.speed(enemy, ENEMY_RUN_SPEED), dt)
+    this.face(enemy, target, dt, COMBAT.turnSpeed)
+    if (enemy.canSee && enemy.stabTimer <= 0) {
+      enemy.stabTimer = rules.every
+      enemy.stabWindup = rules.windup
+      enemy.actor.stab?.()
+      this.context.emit({ kind: 'knife-slash', position: enemy.position.clone().add(eyeOffset), radius: 8 })
     }
     return false
   }
@@ -1793,6 +1902,7 @@ export class EnemyDirector {
     for (const ally of this.enemies) {
       if (ally === sniper || ally.canSee || ally.spec.dummy || ally.health <= 0 || !(ally.state === 'combat' || ally.state === 'investigate' || ally.state === 'search')) continue
       if (ally.position.distanceTo(seen.feet) > ROLES.overwatch.reach) continue
+      if (!this.reaches(ally, seen.feet)) { this.watchFrom(ally, seen.feet); continue }
       if (ally.lastKnown) ally.lastKnown.copy(seen.feet); else ally.lastKnown = seen.feet.clone()
       ally.lostFor = 0
       ally.lastHeading = sniper.lastHeading?.clone() ?? null
@@ -1824,7 +1934,7 @@ export class EnemyDirector {
     const origin = enemy.position.clone().add(eyeOffset)
     const taken = (point: THREE.Vector3) => this.enemies.some(ally => ally !== enemy && ally.state === 'search' &&
       ally.searchPoints.slice(ally.searchIndex).some(assigned => assigned.distanceTo(point) < 2.5))
-    const usable = (point: THREE.Vector3 | null): point is THREE.Vector3 => !!point && this.availablePosition(enemy, point) && !taken(point)
+    const usable = (point: THREE.Vector3 | null): point is THREE.Vector3 => !!point && this.availablePosition(enemy, point) && !taken(point) && this.reaches(enemy, point, ZONES.district.margin)
     const ahead: THREE.Vector3[] = []
     // Lost you while you were on the move: first where you were going, along the ground you could actually have
     // walked (straight on if you could, else the way the passage turns).
@@ -1877,7 +1987,7 @@ export class EnemyDirector {
         const a = angle + nudge * spread
         const x = center.x + Math.sin(a) * along + Math.cos(a) * side, z = center.z + Math.cos(a) * along - Math.sin(a) * side
         const found = this.navigation.floor(new THREE.Vector3(x, center.y, z))
-        if (found && this.availablePosition(enemy, found, 1)) { enemy.searchPoints.push(found); enemy.searchLooks.push(null); break }
+        if (found && this.availablePosition(enemy, found, 1) && this.reaches(enemy, found, ZONES.district.margin)) { enemy.searchPoints.push(found); enemy.searchLooks.push(null); break }
       }
     }
     // The leader also checks the hiding places in the team's slice, in order of distance along the way.
@@ -1984,6 +2094,8 @@ export class EnemyDirector {
 
   private move(enemy: Enemy, destination: THREE.Vector3, speed: number, dt: number) {
     if (enemy.hitPause > 0) return false
+    // Alerted, he keeps to his district (calm rounds and posts are the level's own and may cross a line).
+    if (enemy.state !== 'patrol' && enemy.state !== 'guard') destination = this.tether(enemy, destination)
     // Only authored perimeter patrols let a marksman leave his current post.
     // Combat, sounds and alarms never send him chasing targets off the tower.
     if (enemy.spec.role === 'sniper' && (enemy.spec.patrolMode !== 'perimeter' || enemy.state !== 'patrol')) return false
@@ -2220,7 +2332,8 @@ export class EnemyDirector {
       // A visible muzzle disturbance within plausible view range is noticeable even when a
       // weapon's ordinary sound radius is shorter. It supplies a location, never a confirmed target.
       const shot = event.kind.includes('shot')
-      const visibleShot = shot && insideVisionCone(from, enemy.yaw, event.position, this.sightRange(enemy, true)) &&
+      // (A muzzle flash over in another district is something to watch, not a shot at him: see below.)
+      const visibleShot = shot && this.reaches(enemy, event.position) && insideVisionCone(from, enemy.yaw, event.position, this.sightRange(enemy, true)) &&
         this.context.world.visible(from, event.position, ignore)
       // Seeing the muzzle can interrupt a near-miss scan; hearing it through cover cannot.
       if (visibleShot) {
@@ -2235,6 +2348,12 @@ export class EnemyDirector {
       const muffled = shot ? GUNSHOT_HEARING.muffled : 0.42
       if (!visibleShot && !audible(distance, radius, distance > radius * muffled && distance <= radius &&
         this.context.world.visible(from, source, ignore), muffled)) continue
+      // A sound from outside his district: he looks that way, cautious, and stays put (a shot puts his zone on caution).
+      if (!this.reaches(enemy, event.position)) {
+        this.watchFrom(enemy, event.position)
+        if (shot) this.raiseZone(enemy.zone, 'caution', event.position)
+        continue
+      }
       enemy.lastKnown = event.position.clone()
       // Weapon events originate at eye/muzzle height; routes need the surface below that sound.
       const floor = this.context.world.floor(event.position, 0.38, 2.2, 0.1)
@@ -2269,6 +2388,7 @@ export class EnemyDirector {
       if (['dead', 'reserve', 'combat'].includes(enemy.state) || enemy.spec.dummy || enemy.spec.role === 'sniper') continue
       const from = this.eye(enemy), distance = from.distanceTo(source)
       if (distance < 1 || !audible(distance, reach, this.context.world.visible(from, source, ignore), GUNSHOT_HEARING.muffled)) continue
+      if (!this.reaches(enemy, event.position!)) { this.watchFrom(enemy, event.position!); continue }
       const floor = this.context.world.floor(event.position!, 0.38, 2.2, 0.1)
       enemy.lastKnown = event.position!.clone().setY(Number.isFinite(floor) ? floor + 0.006 : enemy.position.y)
       enemy.lostFor = 0
@@ -2391,8 +2511,21 @@ export class EnemyDirector {
   }
 
   /** The guard and body part a shot strikes, without applying it. Co-op guests report this to the host. */
-  findHit(shot: Shot, maxDistance: number) {
-    const { nearest, best, normalized } = this.nearestHit(shot.origin, shot.direction, Math.min(maxDistance, shot.range))
+  findHit(shot: Shot, maxDistance: number): EnemyHit | null {
+    const reach = Math.min(maxDistance, shot.range)
+    const { nearest, best, normalized } = this.nearestHit(shot.origin, shot.direction, reach)
+    // A radio pack on a man's back, struck before any body: the round smashes the set (see applyHit).
+    let pack: { index: number; distance: number } | null = null
+    for (let i = 0; i < this.enemies.length; i++) {
+      const enemy = this.enemies[i]
+      if (enemy.radioPack !== 'live' || enemy.health <= 0) continue
+      const distance = enemy.actor.radioPackHit?.(shot.origin, normalized, best?.distance ?? reach)
+      if (distance != null && distance < (pack?.distance ?? Infinity)) pack = { index: i, distance }
+    }
+    if (pack) {
+      const point = shot.origin.clone().addScaledVector(normalized, pack.distance)
+      return { index: pack.index, zone: 'torso', point, distance: pack.distance, direction: normalized, pack: true }
+    }
     if (!nearest || !best) return null
     return { index: this.enemies.indexOf(nearest), zone: best.zone, point: best.point, bone: best.bone, distance: best.distance, direction: normalized }
   }
@@ -2403,9 +2536,19 @@ export class EnemyDirector {
   }
 
   /** `explosive`: a frag blast, which is never critical and throws the dead back like buckshot. */
-  applyHit(shot: Shot, found: NonNullable<ReturnType<EnemyDirector['findHit']>>, explosive = false) {
+  applyHit(shot: Shot, found: EnemyHit, explosive = false) {
     const nearest = this.enemies[found.index]
     if (!nearest || nearest.health <= 0 || nearest.state === 'reserve' || nearest.state === 'dead') return false
+    // The radio on his back takes the round: the set is smashed (his district can call no one), he is unhurt but knows.
+    if (found.pack && nearest.radioPack === 'live') {
+      nearest.radioPack = 'broken'
+      nearest.actor.breakRadioPack?.()
+      this.context.emit({ kind: 'impact', position: found.point.clone(), radius: 18 })
+      this.context.onSurfaceHit?.(found.point, found.direction, undefined, shot.weapon)
+      nearest.provoked = COMBAT.contactMemory; nearest.suspicion = 1; nearest.senseTimer = 0
+      this.say(nearest, 'My radio! The radio\'s hit!', 'contact', true)
+      return true
+    }
     const best = found, normalized = found.direction
     const falloff = shot.weapon === 'shotgun' ? shotgunDamageMultiplier(best.distance) : 1
     const fromBehind = normalized.x * Math.sin(nearest.yaw) + normalized.z * Math.cos(nearest.yaw) > 0.25
@@ -2516,7 +2659,7 @@ export class EnemyDirector {
     this.reserveDestination = destination.clone()
     let remaining = radioEnabled ? 4 : 2
     for (const enemy of this.enemies) {
-      if (enemy.state !== 'reserve' || enemy.spec.held || remaining-- <= 0) continue
+      if (enemy.state !== 'reserve' || enemy.spec.held || !this.reaches(enemy, destination) || remaining-- <= 0) continue
       enemy.actor.root.visible = true
       enemy.reserveRoute = true
       enemy.waypoint = 0
@@ -2532,13 +2675,15 @@ export class EnemyDirector {
     for (const enemy of this.enemies) {
       if (enemy.health <= 0 || enemy.state === 'dead') continue
       if (enemy.state === 'reserve') {
-        if (activated >= reserveCount || enemy.spec.held) continue
+        if (activated >= reserveCount || enemy.spec.held || !this.reaches(enemy, destination)) continue
         activated++
         enemy.actor.root.visible = true
         enemy.reserveRoute = false
         enemy.post = new THREE.Vector3(...enemy.spec.position)
         enemy.alarmExit = enemy.spec.alarmExit ? new THREE.Vector3(...enemy.spec.alarmExit) : null
       } else if (!notifyPatrols || enemy.position.y < -1 || enemy.state === 'combat' || enemy.canSee) continue
+      // An alarm in another district: he watches that way and stays.
+      if (!this.reaches(enemy, destination)) { if (enemy.state !== 'reserve') this.watchFrom(enemy, destination); continue }
       enemy.alarmResponse = true
       enemy.lastKnown = destination.clone()
       enemy.lostFor = 0
@@ -2640,7 +2785,7 @@ export class EnemyDirector {
       searchPoints: enemy.searchPoints.map(tuple), searchLooks: enemy.searchLooks.map(look => look ? tuple(look) : null), woundArm: enemy.woundArm, woundLeg: enemy.woundLeg, deathClip: enemy.deathClip,
       headless: enemy.headless, noticedBodies: [...enemy.noticedBodies],
       lastHeading: enemy.lastHeading ? tuple(enemy.lastHeading) : null, searchKind: enemy.searchKind,
-      dodgePoint: enemy.dodgePoint ? tuple(enemy.dodgePoint) : null, sentry: enemy.sentry, helmet: enemy.helmet, buddy: enemy.buddy?.spec.id ?? null,
+      dodgePoint: enemy.dodgePoint ? tuple(enemy.dodgePoint) : null, knife: enemy.knife, radioPack: enemy.radioPack, sentry: enemy.sentry, helmet: enemy.helmet, buddy: enemy.buddy?.spec.id ?? null,
       watch: enemy.watch ? tuple(enemy.watch) : null, sector: enemy.sector ? tuple(enemy.sector) : null, screen: enemy.screen,
       zones: this.zones.snapshot(),
       actorPosture: enemy.actor.postureSnapshot?.(),
@@ -2682,6 +2827,10 @@ export class EnemyDirector {
       enemy.noticedBodies = Array.isArray(saved.noticedBodies) ? saved.noticedBodies.filter((id): id is string => typeof id === 'string') : []
       enemy.lastHeading = vector(saved.lastHeading)
       enemy.dodgePoint = vector(saved.dodgePoint)
+      enemy.knife = !!saved.knife
+      enemy.radioPack = saved.radioPack === 'live' || saved.radioPack === 'broken' ? saved.radioPack : 'none'
+      enemy.actor.restoreRadioPack?.(enemy.radioPack)
+      if (enemy.knife) enemy.actor.drawKnife?.(); else enemy.actor.holsterKnife?.()
       enemy.sentry = !!saved.sentry
       enemy.buddy = typeof saved.buddy === 'string' ? this.enemies.find(other => other.spec.id === saved.buddy) ?? null : null
       enemy.helmet = !!saved.helmet

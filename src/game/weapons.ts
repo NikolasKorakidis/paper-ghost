@@ -4,7 +4,7 @@ import { disposeGun, type Gun } from '../lab/weapons/models'
 import { buildKnifeHand, KNIFE_HAND } from './knife-hand'
 import { offsetDirection } from './aim'
 import type { WeaponContext, WeaponFrame, WeaponItem, WeaponName, WeaponSnapshot } from './types'
-import { AIM_ZOOM, AMMO, GUNSHOT_HEARING, KNIFE, SILENCED_REPORT_RADIUS, STARTING_SLOT, WEAPON_RULES, WEAPON_SLOT, WEAPON_SLOTS, SHOTGUN_PELLETS, SHOTGUN_BALLISTICS, SNIPER_ZOOM, startingLoadout, type KnifeAttack } from './balance'
+import { AIM_ZOOM, GUNSHOT_HEARING, playerAmmoCap, KNIFE, SILENCED_REPORT_RADIUS, STARTING_SLOT, WEAPON_RULES, WEAPON_SLOT, WEAPON_SLOTS, SHOTGUN_PELLETS, SHOTGUN_BALLISTICS, SNIPER_ZOOM, startingLoadout, type KnifeAttack } from './balance'
 import { createMissionGun } from './weapon-models'
 export { WEAPON_RULES } from './balance'
 
@@ -793,12 +793,12 @@ export class FirstPersonWeapons {
     return true
   }
 
-  /** Restock at a supply crate: each gun carried gets its spare ammunition back up to AMMO.player magazines. */
+  /** Restock at a supply crate: each gun carried back up to AMMO.player magazines, the one in it included. */
   resupply() {
     let changed = false
     for (const item of this.inventory) {
       if (!item || item.name === 'knife') continue
-      const full = WEAPON_RULES[item.name].capacity * AMMO.player
+      const full = Math.max(0, playerAmmoCap(WEAPON_RULES[item.name].capacity) - item.magazine)
       if (item.reserve < full) { item.reserve = full; changed = true }
     }
     if (changed) this.context.emit({ kind: 'pickup', position: this.feet.clone(), radius: 2, text: 'Ammunition restocked' })
@@ -855,6 +855,8 @@ export class FirstPersonWeapons {
     const item = copyItem(found.item)
     delete item.position
     delete item.stand
+    // He carries no more than AMMO.player magazines of it, whatever was on the man who dropped it.
+    item.reserve = Math.min(item.reserve, Math.max(0, playerAmmoCap(WEAPON_RULES[item.name].capacity) - item.magazine))
     this.inventory[destination] = item
     this.slot = destination
     this.switchTime = 0.22

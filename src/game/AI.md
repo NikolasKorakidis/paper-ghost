@@ -20,6 +20,26 @@ paths.
 
 Tunables live in `balance.ts`: `DETECTION`, `GUNSHOT_HEARING`, `ENEMY_COMBAT`, `ZONES` and `COMBAT_ROLES`.
 
+## Districts
+
+The campaign maps are split into a few authored districts (`MissionWorld.zones` with `district: true`). The compound
+has three: Yard, Warehouses and Detention. The town has five: North road, Church quarter, Town centre, Farm and Hotel
+hill. Districts keep a fight from pulling in half the map:
+
+- **Movement:** an alerted guard never leaves his district. `tether` brings any destination outside it back just
+  inside. Calm patrols keep their authored routes.
+- **Fighting:** he fights you only while you are in his district or within `ZONES.district.engage` m of it, or when
+  you shoot at him (`provoked`). Seen across the line, you are watched, not engaged.
+- **Trouble elsewhere:** a sound, a sighting, a comrade's gunfire, a radio call, an alarm or a sniper's callout from
+  another district only puts him on caution and turns him to watch (`watchFrom`).
+- **Bodies:** a body seen over the line is radioed in, and that district searches.
+- **Help:** squads never form across a line, and help comes only from the same district.
+- **Radio:** districts warn each other only by radio, never by shouting.
+
+Each district's radioman wears its radio on his back: a grey pack, the zone's operator. A shot that meets the pack
+before any body smashes it (`EnemyHit.pack`) and leaves him unhurt. His district then has no radio: no warnings, no
+help and no check-ins.
+
 ## Zones
 
 A zone is a building and its yard (`ZONES.yard` m), made from every object with `userData.footprint`. Buildings within
@@ -38,8 +58,8 @@ go over the zone's radio.
 
 ## Radio
 
-Each zone has an operator: `EnemySpec.radio`, or the guard posted nearest a radio set in the zone, or its middle
-guard. The zone's radio is up while the operator lives and, if the zone has field radio sets (`userData.questItem =
+Each zone has an operator, who carries the radio pack: `EnemySpec.radio`, else (in a district) the patrolling guard
+nearest its middle, else the guard posted nearest a radio set in the zone, else its middle guard. The zone's radio is up while the operator lives with his pack whole and, if the zone has field radio sets (`userData.questItem =
 'radio'`), at least one still works. The sets are switched off or shot through the existing radio objectives.
 
 - **Check-ins:** every `ZONES.radio.interval` s the operator calls round. A dead guard nobody has found misses it: the
@@ -58,6 +78,13 @@ guard. The zone's radio is up while the operator lives and, if the zone has fiel
   way ahead is blocked, it follows the passage round the turn.
 - **Torches:** a guard searching, investigating, or fighting someone he cannot see inside a dark room switches on a
   torch. It is a forward-only warm light without shadows, added to the existing lighting.
+
+## Ammunition (`AMMO`)
+
+- **Guards:** each carries four magazines. Run dry, he restocks at a supply crate in his own district. With none, he
+  draws his knife and comes for you, stabbing within `COMBAT_ROLES.knife.reach`.
+- **Player:** carries at most two magazines of any gun, from the start, at a crate, or picking a gun up off a body.
+- **Guns placed in a level:** hold one magazine.
 
 ## Squad roles in a fight (`COMBAT_ROLES`)
 
